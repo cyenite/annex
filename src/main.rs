@@ -1,82 +1,29 @@
 mod adb;
+mod bridge;
+mod cli;
 mod docker;
 mod doctor;
 mod gpu;
 mod instance;
+mod paths;
+mod process;
+mod redroid;
+mod scrcpy;
+mod setup;
 mod snapshot;
+mod waydroid;
+mod window;
 
-use std::env;
-use std::fs::{self, File};
-use std::path::PathBuf;
-use std::process::{Command, ExitCode, Stdio};
-use std::thread::sleep;
-use std::time::{Duration, Instant};
+use std::io;
+use std::process::ExitCode;
+use std::time::Instant;
 
-use anyhow::{Context, Result, bail};
-use clap::{Parser, Subcommand};
+use anyhow::{Result, bail};
+use clap::{CommandFactory, Parser};
 
 use adb::Adb;
-use instance::AndroidVersion;
-
-const SHOW_STARTUP: Duration = Duration::from_secs(3);
-
-#[derive(Parser)]
-#[command(
-    name = "annex",
-    version,
-    about = "Fast Android instances for Linux developers"
-)]
-struct Cli {
-    #[command(subcommand)]
-    command: Commands,
-}
-
-#[derive(Subcommand)]
-enum Commands {
-    /// Check that this machine can run Android instances
-    Doctor,
-    /// Create or start an instance and wait until adb can use it
-    Up {
-        name: String,
-        /// Android version for a new instance [default: 15]
-        #[arg(long, value_enum)]
-        android: Option<AndroidVersion>,
-    },
-    /// Stop an instance (its data is kept)
-    Down { name: String },
-    /// Pause an instance in memory; `thaw` resumes it in well under a second
-    Freeze { name: String },
-    /// Resume a frozen instance
-    Thaw { name: String },
-    /// List instances
-    Ls,
-    /// Open a window showing an instance's screen (needs scrcpy)
-    Show { name: String },
-    /// Wipe an instance back to first boot, or to a snapshot with --to
-    Reset {
-        name: String,
-        #[arg(long)]
-        to: Option<String>,
-    },
-    /// Delete an instance and its data
-    Rm {
-        name: String,
-        /// Keep the data volume
-        #[arg(long)]
-        keep_data: bool,
-    },
-    /// Save and list snapshots of an instance's data
-    #[command(subcommand)]
-    Snap(SnapCommand),
-}
-
-#[derive(Subcommand)]
-enum SnapCommand {
-    /// Save the instance's current data under a label
-    Save { name: String, label: String },
-    /// List an instance's snapshots
-    Ls { name: String },
-}
+use cli::{BridgeCommand, Cli, Commands, SnapCommand};
+use instance::{Backend, UpOptions};
 
 fn main() -> ExitCode {
     match run(Cli::parse().command) {
@@ -104,31 +51,121 @@ fn run(command: Commands) -> Result<ExitCode> {
                 ExitCode::SUCCESS
             });
         }
-        Commands::Up { name, android } => {
-            instance::validate_name(&name)?;
-            let instance = instance::up(&Adb::locate()?, &name, android)?;
+        Commands::Setup {
+            yes,
+            dry_run,
+            bridge,
+            window_mode,
+            repair,
+        } => setup::run(setup::Run {
+            is_yes: yes,
+            is_dry_run: dry_run,
+            options: setup::Options {
+                bridge,
+                repair,
+                window_mode,
+            },
+        })?,
+        Commands::About { licenses } => {
+            if licenses {
+                print!("{}", include_str!("../THIRD_PARTY_NOTICES.md"));
+            } else {
+                println!("annex {}", env!("CARGO_PKG_VERSION"));
+                println!("{}", env!("CARGO_PKG_DESCRIPTION"));
+                println!("{}", env!("CARGO_PKG_REPOSITORY"));
+                println!("License: {}", env!("CARGO_PKG_LICENSE"));
+                println!("Third-party notices: annex about --licenses");
+            }
+        }
+        Commands::Up {
+            name,
+            mode,
+            android,
+            display,
+        } => {
+            let name = name.unwrap_or_else(|| instance::DEFAULT_NAME.to_string());
+            let options = UpOptions {
+                mode,
+                display,
+                android,
+            };
+            let instance = instance::up(&Adb::locate()?, &name, options)?;
             println!(
-                "{name} ready at {} (Android {}, API {}) in {}",
-                instance.serial(),
-                instance.android.label(),
-                instance.android.api(),
+                "{name} ready at {} (Android {}) in {}",
+                instance.serial,
+                instance.android(),
                 elapsed()
             );
         }
         Commands::Down { name } => {
+            let name = instance::resolve(name)?;
             instance::down(&Adb::locate()?, &name)?;
             println!("{name} stopped in {}", elapsed());
         }
         Commands::Freeze { name } => {
+            let name = instance::resolve(name)?;
             instance::freeze(&name)?;
             println!("{name} frozen in {}", elapsed());
         }
         Commands::Thaw { name } => {
+            let name = instance::resolve(name)?;
             instance::thaw(&Adb::locate()?, &name)?;
             println!("{name} thawed in {}", elapsed());
         }
         Commands::Ls => list()?,
-        Commands::Show { name } => show(&name)?,
+        Commands::Show { name } => {
+            let name = instance::resolve(name)?;
+            window::show(&Adb::locate()?, &instance::require_running(&name)?)?;
+            println!("opened a window for {name}");
+        }
+        Commands::Open { args } => {
+            let (name, rest) = instance::split_name(args, 1)?;
+            let [package] = &rest[..] else {
+                bail!("give one app package name, like com.android.settings");
+            };
+            window::open(&Adb::locate()?, &instance::require_running(&name)?, package)?;
+            println!("opened {package} on {name}");
+        }
+        Commands::Install { args } => {
+            let (name, apks) = instance::split_name(args, 1)?;
+            if apks.is_empty() {
+                bail!("give at least one APK file");
+            }
+            let adb = Adb::locate()?;
+            let instance = instance::require_running(&name)?;
+            for apk in &apks {
+                adb.run_attached(&instance.serial, &["install", "-r", "-g", apk])?;
+            }
+            println!(
+                "installed {} on {name} in {}",
+                plural(apks.len(), "APK"),
+                elapsed()
+            );
+        }
+        Commands::Push { args, to } => {
+            let (name, paths) = instance::split_name(args, 1)?;
+            if paths.is_empty() {
+                bail!("give at least one file or folder to copy");
+            }
+            let adb = Adb::locate()?;
+            let instance = instance::require_running(&name)?;
+            let mut command: Vec<&str> = vec!["push"];
+            command.extend(paths.iter().map(String::as_str));
+            command.push(&to);
+            adb.run_attached(&instance.serial, &command)?;
+            println!("copied {} to {name}:{to}", plural(paths.len(), "item"));
+        }
+        Commands::Pull { args } => {
+            let (name, rest) = instance::split_name(args, 1)?;
+            let (source, destination) = match &rest[..] {
+                [source] => (source.as_str(), "."),
+                [source, destination] => (source.as_str(), destination.as_str()),
+                _ => bail!("give the path on the instance and, optionally, where to put it"),
+            };
+            let adb = Adb::locate()?;
+            let instance = instance::require_running(&name)?;
+            adb.run_attached(&instance.serial, &["pull", source, destination])?;
+        }
         Commands::Reset { name, to } => {
             snapshot::reset(&Adb::locate()?, &name, to.as_deref())?;
             let target = to.map_or("first boot".to_string(), |label| {
@@ -140,11 +177,17 @@ fn run(command: Commands) -> Result<ExitCode> {
             instance::remove(&Adb::locate()?, &name, keep_data)?;
             println!("{name} removed");
         }
-        Commands::Snap(SnapCommand::Save { name, label }) => {
-            let path = snapshot::save(&name, &label)?;
+        Commands::Snap(SnapCommand::Save { args }) => {
+            let (name, rest) = instance::split_name(args, 1)?;
+            let [label] = &rest[..] else {
+                bail!("give one label for the snapshot");
+            };
+            let path = snapshot::save(&name, label)?;
             println!("saved {} in {}", path.display(), elapsed());
         }
         Commands::Snap(SnapCommand::Ls { name }) => {
+            let name = instance::resolve(name)?;
+            instance::require(&name)?.container("snapshots")?;
             for snapshot in snapshot::list(&name)? {
                 println!(
                     "{:<24} {:>8.1} MB",
@@ -153,8 +196,31 @@ fn run(command: Commands) -> Result<ExitCode> {
                 );
             }
         }
+        Commands::Bridge(command) => bridge_command(command)?,
+        Commands::Completions { shell } => {
+            clap_complete::generate(shell, &mut Cli::command(), "annex", &mut io::stdout());
+        }
     }
     Ok(ExitCode::SUCCESS)
+}
+
+fn bridge_command(command: BridgeCommand) -> Result<()> {
+    match command {
+        BridgeCommand::Run { verbose } => bridge::run(&Adb::locate()?, verbose)?,
+        BridgeCommand::Install => {
+            let path = bridge::service::install()?;
+            println!("bridge installed as {} and running", path.display());
+            println!("logs: journalctl --user -u annex-bridge -f");
+        }
+        BridgeCommand::Uninstall => {
+            bridge::service::uninstall()?;
+            println!("bridge removed");
+        }
+        BridgeCommand::Status => {
+            println!("bridge service: {}", bridge::service::state());
+        }
+    }
+    Ok(())
 }
 
 fn list() -> Result<()> {
@@ -164,66 +230,30 @@ fn list() -> Result<()> {
         return Ok(());
     }
     println!(
-        "{:<20} {:<8} {:<8} {:<16} SNAPSHOTS",
-        "NAME", "STATE", "ANDROID", "ADB"
+        "{:<20} {:<8} {:<10} {:<8} {:<22} SNAPSHOTS",
+        "NAME", "STATE", "MODE", "ANDROID", "ADB"
     );
     for instance in instances {
+        let snapshots = match instance.backend {
+            Backend::Redroid(_) => snapshot::list(&instance.name)?.len().to_string(),
+            Backend::Waydroid { .. } => "-".to_string(),
+        };
         println!(
-            "{:<20} {:<8} {:<8} {:<16} {}",
+            "{:<20} {:<8} {:<10} {:<8} {:<22} {snapshots}",
             instance.name,
             instance.state.label(),
-            instance.android.label(),
-            instance.serial(),
-            snapshot::list(&instance.name)?.len()
+            instance.backend.mode().label(),
+            instance.android(),
+            instance.serial,
         );
     }
     Ok(())
 }
 
-fn show(name: &str) -> Result<()> {
-    let adb = Adb::locate()?;
-    let instance = instance::require(name)?;
-    let scrcpy =
-        which("scrcpy").context("scrcpy not found: install it to open instance windows")?;
-    let log_path = data_dir().join("logs").join(format!("show-{name}.log"));
-    fs::create_dir_all(log_path.parent().expect("log path has a parent"))?;
-    // scrcpy starts its own adb unless told which one, and a mismatched adb kills the running server.
-    // Audio is off because Redroid images have no Opus encoder, which crashes scrcpy's server.
-    let mut child = Command::new(scrcpy)
-        .args([
-            "--serial",
-            &instance.serial(),
-            "--window-title",
-            &format!("annex: {name}"),
-            "--no-audio",
-        ])
-        .env("ADB", adb.path())
-        .stdin(Stdio::null())
-        .stdout(File::create(&log_path)?)
-        .stderr(File::create(&log_path)?)
-        .spawn()
-        .context("failed to start scrcpy")?;
-    sleep(SHOW_STARTUP);
-    if let Some(status) = child.try_wait()? {
-        let log = fs::read_to_string(&log_path).unwrap_or_default();
-        let tail: Vec<&str> = log.lines().rev().take(8).collect();
-        let tail: Vec<&str> = tail.into_iter().rev().collect();
-        bail!("scrcpy exited ({status}):\n{}", tail.join("\n"));
+fn plural(count: usize, noun: &str) -> String {
+    if count == 1 {
+        format!("1 {noun}")
+    } else {
+        format!("{count} {noun}s")
     }
-    println!("opened a window for {name} (log: {})", log_path.display());
-    Ok(())
-}
-
-pub fn which(program: &str) -> Option<PathBuf> {
-    env::split_paths(&env::var_os("PATH")?)
-        .map(|directory| directory.join(program))
-        .find(|candidate| candidate.is_file())
-}
-
-pub fn data_dir() -> PathBuf {
-    env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share")))
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("annex")
 }

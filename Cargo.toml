@@ -2,9 +2,27 @@
 name = "annex"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.88"
 license = "Apache-2.0"
 description = "Fast Android instances for Linux developers"
+repository = "https://github.com/cyenite/annex"
+homepage = "https://github.com/cyenite/annex"
+readme = "README.md"
+keywords = ["android", "emulator", "adb", "flutter", "developer-tools"]
+categories = ["command-line-utilities", "development-tools", "emulators"]
+exclude = ["phase0/"]
 
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
+clap_complete = "4"
+console = "0.16"
+indicatif = "0.18"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+x11rb = { version = "0.14", features = ["xfixes"] }
+
+[profile.release]
+lto = true
+strip = true
+codegen-units = 1

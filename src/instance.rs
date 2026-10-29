@@ -1,23 +1,11 @@
-use std::net::TcpListener;
-use std::thread::sleep;
-use std::time::{Duration, Instant};
-
 use anyhow::{Context, Result, bail};
 use clap::ValueEnum;
 
 use crate::adb::Adb;
-use crate::{docker, gpu};
+use crate::redroid::{self, Container, Display};
+use crate::waydroid;
 
-const PORTS: std::ops::Range<u16> = 5600..5700;
-const BOOT_TIMEOUT: Duration = Duration::from_secs(180);
-const PULL_ATTEMPTS: u32 = 3;
-const CONTAINER_CONFIG: &str = "2";
-const ADB_KEYS_PATH: &str = "/product/etc/security/adb_keys";
-// The simulated Bluetooth HAL listens on TCP 6111/6211/6311 on every interface, reachable by any
-// local user through the Docker bridge; masking its init script keeps it from starting.
-const BLUETOOTH_SIM_INIT: &str = "/vendor/etc/init/android.hardware.bluetooth@1.1-service.sim.rc";
-
-#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 pub enum AndroidVersion {
     #[value(name = "13")]
     Android13,
@@ -36,14 +24,6 @@ impl AndroidVersion {
         }
     }
 
-    pub fn api(self) -> u8 {
-        match self {
-            Self::Android13 => 33,
-            Self::Android14 => 34,
-            Self::Android15 => 35,
-        }
-    }
-
     pub fn image(self) -> &'static str {
         match self {
             Self::Android13 => "redroid/redroid:13.0.0-latest",
@@ -52,7 +32,7 @@ impl AndroidVersion {
         }
     }
 
-    fn from_label(label: &str) -> Option<Self> {
+    pub fn from_label(label: &str) -> Option<Self> {
         Self::value_variants()
             .iter()
             .copied()
@@ -60,104 +40,126 @@ impl AndroidVersion {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum State {
     Running,
-    Paused,
+    Frozen,
     Stopped,
 }
 
 impl State {
-    fn from_docker(raw: &str) -> Self {
-        match raw {
-            "running" | "restarting" => Self::Running,
-            "paused" => Self::Paused,
-            _ => Self::Stopped,
-        }
-    }
-
     pub fn label(self) -> &'static str {
         match self {
             Self::Running => "running",
-            Self::Paused => "frozen",
+            Self::Frozen => "frozen",
             Self::Stopped => "stopped",
         }
     }
 }
 
+/// How an instance runs, in the terms users see. Container mode is Redroid; window mode is
+/// Waydroid. User-facing text names the mode, never the project behind it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
+pub enum Mode {
+    /// Any number of instances, Android 13-15, snapshots and reset
+    #[default]
+    Container,
+    /// One instance whose apps open in native desktop windows
+    Window,
+}
+
+impl Mode {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Container => "container",
+            Self::Window => "window",
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum Backend {
+    Redroid(Container),
+    /// The Android release is only known once the session has run; see `waydroid::release`.
+    Waydroid {
+        release: Option<String>,
+    },
+}
+
+impl Backend {
+    pub fn mode(&self) -> Mode {
+        match self {
+            Self::Redroid(_) => Mode::Container,
+            Self::Waydroid { .. } => Mode::Window,
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
 pub struct Instance {
-    pub port: u16,
     pub name: String,
-    pub config: String,
+    pub serial: String,
     pub state: State,
-    pub android: AndroidVersion,
+    pub backend: Backend,
 }
 
 impl Instance {
-    pub fn serial(&self) -> String {
-        format!("127.0.0.1:{}", self.port)
+    pub fn android(&self) -> &str {
+        match &self.backend {
+            Backend::Redroid(container) => container.android.label(),
+            Backend::Waydroid { release } => release.as_deref().unwrap_or("-"),
+        }
     }
 
-    pub fn container(&self) -> String {
-        container_name(&self.name)
+    /// The container behind this instance, for operations window mode can't offer.
+    pub fn container(&self, operation: &str) -> Result<&Container> {
+        match &self.backend {
+            Backend::Redroid(container) => Ok(container),
+            Backend::Waydroid { .. } => bail!(
+                "{operation} works in container mode only: window mode keeps its data in a system install"
+            ),
+        }
     }
+}
 
-    pub fn is_outdated(&self) -> bool {
-        self.config != CONTAINER_CONFIG
-    }
-
-    fn parse(line: &str) -> Result<Self> {
-        let fields: Vec<&str> = line.split('\t').collect();
-        let [state, name, android, port, ..] = fields[..] else {
-            bail!("unexpected docker output: {line}");
-        };
-        // Containers from before the config label have an empty last column, which trimming drops.
-        let config = fields.get(4).copied().unwrap_or_default();
-        Ok(Self {
-            port: port
-                .parse()
-                .with_context(|| format!("bad adb port label on {name}"))?,
-            name: name.to_string(),
-            config: config.to_string(),
-            state: State::from_docker(state),
-            android: AndroidVersion::from_label(android)
-                .with_context(|| format!("unsupported Android version {android} on {name}"))?,
-        })
-    }
+#[derive(Clone, Copy, Default)]
+pub struct UpOptions {
+    pub mode: Option<Mode>,
+    pub display: Option<Display>,
+    pub android: Option<AndroidVersion>,
 }
 
 pub fn validate_name(name: &str) -> Result<()> {
     let is_valid = !name.is_empty()
         && name.len() <= 40
+        && name.starts_with(|c: char| c.is_ascii_alphanumeric())
         && name
             .chars()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
     if !is_valid {
-        bail!("instance names use lowercase letters, digits and '-' (at most 40 characters)");
+        bail!(
+            "names use lowercase letters, digits and '-', start with a letter or digit, and are at most 40 characters"
+        );
     }
     Ok(())
 }
 
 pub fn list() -> Result<Vec<Instance>> {
-    let format = "{{.State}}\t{{.Label \"annex.name\"}}\t{{.Label \"annex.android\"}}\t{{.Label \"annex.adb-port\"}}\t{{.Label \"annex.config\"}}";
-    let output = docker::run(&[
-        "ps",
-        "-a",
-        "--filter",
-        "label=annex.name",
-        "--format",
-        format,
-    ])?;
-    let mut instances = output
-        .lines()
-        .map(Instance::parse)
-        .collect::<Result<Vec<_>>>()?;
+    let mut instances = redroid::list()?;
+    instances.extend(waydroid::instance()?);
     instances.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(instances)
 }
 
 pub fn find(name: &str) -> Result<Option<Instance>> {
-    Ok(list()?.into_iter().find(|instance| instance.name == name))
+    if waydroid::registered_name().as_deref() == Some(name)
+        && let Some(instance) = waydroid::instance()?
+    {
+        return Ok(Some(instance));
+    }
+    Ok(redroid::list()?
+        .into_iter()
+        .find(|instance| instance.name == name))
 }
 
 pub fn require(name: &str) -> Result<Instance> {
@@ -165,50 +167,37 @@ pub fn require(name: &str) -> Result<Instance> {
         .with_context(|| format!("no instance named {name}: create it with `annex up {name}`"))
 }
 
-pub fn up(adb: &Adb, name: &str, android: Option<AndroidVersion>) -> Result<Instance> {
-    let instance = match find(name)? {
-        Some(existing) => {
-            if let Some(wanted) = android.filter(|wanted| *wanted != existing.android) {
+pub fn up(adb: &Adb, name: &str, options: UpOptions) -> Result<Instance> {
+    validate_name(name)?;
+    let current = find(name)?.map(|instance| instance.backend.mode());
+    let mode = match (options.mode, current) {
+        (Some(wanted), Some(current)) if wanted != current => bail!(
+            "{name} runs in {} mode: remove it with `annex rm {name}` to recreate it in {} mode",
+            current.label(),
+            wanted.label()
+        ),
+        (wanted, current) => wanted.or(current).unwrap_or_default(),
+    };
+    match mode {
+        Mode::Container => redroid::up(adb, name, options),
+        Mode::Window => {
+            if options.android.is_some() || options.display.is_some() {
                 bail!(
-                    "{name} runs Android {}, not {}: remove it with `annex rm {name}` first",
-                    existing.android.label(),
-                    wanted.label()
+                    "--android and --display apply to container mode; window mode's Android and screen come from its system image"
                 );
             }
-            if existing.is_outdated() {
-                println!("updating {name}'s container to the current configuration (data kept)");
-                rebuild(adb, &existing)?;
-                docker::run(&["start", &existing.container()])?;
-            } else {
-                match existing.state {
-                    State::Running => {}
-                    State::Paused => docker::run(&["unpause", &existing.container()]).map(drop)?,
-                    State::Stopped => docker::run(&["start", &existing.container()]).map(drop)?,
-                }
-            }
-            existing
+            waydroid::up(adb, name)
         }
-        None => {
-            let android = android.unwrap_or(AndroidVersion::Android15);
-            ensure_image(android)?;
-            let port = free_port(&list()?)?;
-            create(adb, name, android, port)?;
-            docker::run(&["start", &container_name(name)])?;
-            require(name)?
-        }
-    };
-    wait_until_booted(&instance)?;
-    adb.connect(&instance.serial())?;
-    Ok(instance)
+    }
 }
 
 pub fn down(adb: &Adb, name: &str) -> Result<()> {
     let instance = require(name)?;
-    adb.disconnect(&instance.serial());
-    if instance.state == State::Paused {
-        docker::run(&["unpause", &instance.container()])?;
+    adb.disconnect(&instance.serial);
+    match &instance.backend {
+        Backend::Redroid(_) => redroid::down(&instance),
+        Backend::Waydroid { .. } => waydroid::down(),
     }
-    docker::run(&["stop", "--time", "5", &instance.container()]).map(drop)
 }
 
 pub fn freeze(name: &str) -> Result<()> {
@@ -219,164 +208,136 @@ pub fn freeze(name: &str) -> Result<()> {
             instance.state.label()
         );
     }
-    docker::run(&["pause", &instance.container()]).map(drop)
+    match &instance.backend {
+        Backend::Redroid(_) => redroid::freeze(&instance),
+        Backend::Waydroid { .. } => waydroid::freeze(),
+    }
 }
 
 pub fn thaw(adb: &Adb, name: &str) -> Result<()> {
     let instance = require(name)?;
-    if instance.state != State::Paused {
+    if instance.state != State::Frozen {
         bail!("{name} is {}, not frozen", instance.state.label());
     }
-    docker::run(&["unpause", &instance.container()])?;
-    adb.connect(&instance.serial())
+    match &instance.backend {
+        Backend::Redroid(_) => redroid::thaw(&instance)?,
+        Backend::Waydroid { .. } => waydroid::thaw()?,
+    }
+    adb.connect(&instance.serial)
 }
 
 pub fn remove(adb: &Adb, name: &str, keep_data: bool) -> Result<()> {
     let instance = require(name)?;
-    adb.disconnect(&instance.serial());
-    docker::run(&["rm", "--force", &instance.container()])?;
-    if !keep_data {
-        docker::run(&["volume", "rm", &volume_name(name)])?;
-    }
-    Ok(())
-}
-
-/// Recreates the container on an empty data volume, keeping its port and Android version.
-pub fn recreate(adb: &Adb, instance: &Instance) -> Result<()> {
-    adb.disconnect(&instance.serial());
-    docker::run(&["rm", "--force", &instance.container()])?;
-    docker::run(&["volume", "rm", "--force", &volume_name(&instance.name)])?;
-    create(adb, &instance.name, instance.android, instance.port)
-}
-
-/// Recreates the container with the current configuration on its existing data volume.
-fn rebuild(adb: &Adb, instance: &Instance) -> Result<()> {
-    adb.disconnect(&instance.serial());
-    docker::run(&["rm", "--force", &instance.container()])?;
-    create(adb, &instance.name, instance.android, instance.port)
-}
-
-pub fn start_and_connect(adb: &Adb, instance: &Instance) -> Result<()> {
-    docker::run(&["start", &instance.container()])?;
-    wait_until_booted(instance)?;
-    adb.connect(&instance.serial())
-}
-
-fn create(adb: &Adb, name: &str, android: AndroidVersion, port: u16) -> Result<()> {
-    let gpu_mode = if gpu::has_hardware_rendering() {
-        "host"
-    } else {
-        "guest"
-    };
-    let public_key = adb.public_key()?;
-    let container = container_name(name);
-    let key_mount = format!("{}:{ADB_KEYS_PATH}:ro", public_key.display());
-    let name_label = format!("annex.name={name}");
-    let port_label = format!("annex.adb-port={port}");
-    let data_mount = format!("{}:/data", volume_name(name));
-    let config_label = format!("annex.config={CONTAINER_CONFIG}");
-    let port_binding = format!("127.0.0.1:{port}:5555");
-    let gpu_argument = format!("androidboot.redroid_gpu_mode={gpu_mode}");
-    let android_label = format!("annex.android={}", android.label());
-    let bluetooth_mask = format!("type=bind,src=/dev/null,dst={BLUETOOTH_SIM_INIT},readonly");
-    // Redroid cannot boot without --privileged (its init needs writable sysfs and cgroups), so the
-    // container is root-equivalent: adbd must only accept the user's key, and nothing else may listen.
-    docker::run(&[
-        "create",
-        "--privileged",
-        "--name",
-        &container,
-        "--hostname",
-        name,
-        "--label",
-        &name_label,
-        "--label",
-        &android_label,
-        "--label",
-        &port_label,
-        "--label",
-        &config_label,
-        "--volume",
-        &data_mount,
-        "--volume",
-        &key_mount,
-        "--mount",
-        &bluetooth_mask,
-        "--publish",
-        &port_binding,
-        android.image(),
-        "androidboot.use_memfd=true",
-        "ro.adb.secure=1",
-        &gpu_argument,
-        "androidboot.redroid_width=1080",
-        "androidboot.redroid_height=2400",
-        "androidboot.redroid_dpi=420",
-    ])
-    .map(drop)
-}
-
-fn ensure_image(android: AndroidVersion) -> Result<()> {
-    if docker::succeeds(&["image", "inspect", android.image()]) {
-        return Ok(());
-    }
-    println!(
-        "downloading {} (about 3 GB, first time only)",
-        android.image()
-    );
-    let mut last_error = None;
-    for _ in 0..PULL_ATTEMPTS {
-        match docker::run(&["pull", "--quiet", android.image()]) {
-            Ok(_) => return Ok(()),
-            Err(error) => last_error = Some(error),
-        }
-    }
-    Err(last_error.expect("at least one pull attempt"))
-}
-
-fn free_port(instances: &[Instance]) -> Result<u16> {
-    PORTS
-        .filter(|port| instances.iter().all(|instance| instance.port != *port))
-        .find(|port| TcpListener::bind(("127.0.0.1", *port)).is_ok())
-        .with_context(|| {
-            format!(
-                "no free adb port between {} and {}",
-                PORTS.start,
-                PORTS.end - 1
-            )
-        })
-}
-
-fn wait_until_booted(instance: &Instance) -> Result<()> {
-    let started = Instant::now();
-    let container = instance.container();
-    loop {
-        let is_booted = docker::run(&["exec", &container, "getprop", "sys.boot_completed"])
-            .is_ok_and(|value| value == "1");
-        if is_booted {
-            return Ok(());
-        }
-        let state = docker::run(&["inspect", "--format", "{{.State.Status}}", &container])?;
-        if State::from_docker(&state) == State::Stopped {
-            bail!(
-                "{} stopped while booting: see `docker logs {container}`",
-                instance.name
+    adb.disconnect(&instance.serial);
+    match &instance.backend {
+        Backend::Redroid(_) => redroid::remove(&instance, keep_data),
+        Backend::Waydroid { .. } => {
+            println!(
+                "window mode keeps its Android data in a system install; the next window-mode instance starts with it"
             );
+            waydroid::remove()
         }
-        if started.elapsed() > BOOT_TIMEOUT {
-            bail!(
-                "{} did not finish booting within {} s",
-                instance.name,
-                BOOT_TIMEOUT.as_secs()
-            );
-        }
-        sleep(Duration::from_millis(250));
     }
 }
 
-fn container_name(name: &str) -> String {
-    format!("annex-{name}")
+/// What `annex up` creates and starts when no name is given.
+pub const DEFAULT_NAME: &str = "default";
+
+/// The instance a command means when its name is left out: `default` if it exists, otherwise
+/// the only running instance.
+pub fn resolve(name: Option<String>) -> Result<String> {
+    if let Some(name) = name {
+        return Ok(name);
+    }
+    let instances = list()?;
+    if instances
+        .iter()
+        .any(|instance| instance.name == DEFAULT_NAME)
+    {
+        return Ok(DEFAULT_NAME.to_string());
+    }
+    let running: Vec<&str> = instances
+        .iter()
+        .filter(|instance| instance.state == State::Running)
+        .map(|instance| instance.name.as_str())
+        .collect();
+    match running[..] {
+        [only] => Ok(only.to_string()),
+        [] => bail!("no instance is running: start one with `annex up`"),
+        _ => bail!(
+            "several instances are running ({}): name the one you mean",
+            running.join(", ")
+        ),
+    }
 }
 
-fn volume_name(name: &str) -> String {
-    format!("annex-{name}-data")
+/// Splits a command's positional arguments into an optional leading instance name and the
+/// rest. The first argument counts as a name only when an instance has that name and at least
+/// `rest` arguments remain after it, so a file that happens to share a name still works when
+/// it's the only argument.
+pub fn split_name(mut args: Vec<String>, rest: usize) -> Result<(String, Vec<String>)> {
+    let names: Vec<String> = list()?.into_iter().map(|instance| instance.name).collect();
+    if is_leading_name(&args, rest, &names) {
+        let name = args.remove(0);
+        return Ok((name, args));
+    }
+    Ok((resolve(None)?, args))
+}
+
+fn is_leading_name(args: &[String], rest: usize, names: &[String]) -> bool {
+    args.len() > rest && args.first().is_some_and(|first| names.contains(first))
+}
+
+/// Fails unless the instance is running, so adb commands don't hang on a frozen one.
+pub fn require_running(name: &str) -> Result<Instance> {
+    let instance = require(name)?;
+    match instance.state {
+        State::Running => Ok(instance),
+        State::Frozen => bail!("{name} is frozen: `annex thaw {name}` first"),
+        State::Stopped => bail!("{name} is stopped: `annex up {name}` first"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accepts_simple_names() {
+        for name in ["pixel", "old-13", "a", "9lives"] {
+            assert!(validate_name(name).is_ok(), "{name}");
+        }
+    }
+
+    #[test]
+    fn rejects_names_docker_or_a_shell_would_mangle() {
+        let too_long = "a".repeat(41);
+        for name in ["", "Pixel", "-x", "a_b", "a b", "a/b", too_long.as_str()] {
+            assert!(validate_name(name).is_err(), "{name}");
+        }
+    }
+
+    #[test]
+    fn a_leading_instance_name_needs_arguments_after_it() {
+        let names = vec!["pixel".to_string()];
+        let args = |parts: &[&str]| {
+            parts
+                .iter()
+                .map(|part| part.to_string())
+                .collect::<Vec<_>>()
+        };
+        assert!(is_leading_name(&args(&["pixel", "app.apk"]), 1, &names));
+        assert!(!is_leading_name(&args(&["pixel"]), 1, &names));
+        assert!(!is_leading_name(&args(&["other", "app.apk"]), 1, &names));
+        assert!(is_leading_name(&args(&["pixel", "/sdcard/a"]), 1, &names));
+        assert!(!is_leading_name(&args(&["/sdcard/a", "out"]), 1, &names));
+    }
+
+    #[test]
+    fn android_labels_round_trip() {
+        for version in AndroidVersion::value_variants() {
+            assert_eq!(AndroidVersion::from_label(version.label()), Some(*version));
+        }
+        assert_eq!(AndroidVersion::from_label("16"), None);
+    }
 }

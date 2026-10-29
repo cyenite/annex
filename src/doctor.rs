@@ -1,9 +1,13 @@
+use std::env;
 use std::fs;
 use std::path::Path;
 
 use crate::adb::Adb;
 use crate::instance::AndroidVersion;
-use crate::{docker, gpu, which};
+use crate::paths::which;
+use crate::scrcpy::Scrcpy;
+use crate::setup::facts;
+use crate::{docker, gpu, waydroid};
 
 const LOW_MEMORY_KIB: u64 = 2 * 1024 * 1024;
 
@@ -50,9 +54,12 @@ pub fn run() -> Vec<Check> {
         graphics(),
         adb(),
         adb_key(),
-        scrcpy(),
+        windows(),
         memory(),
         image(),
+        window_mode(),
+        desktop_clipboard(),
+        desktop_notifications(),
     ]
 }
 
@@ -73,35 +80,21 @@ fn kernel() -> Check {
 }
 
 fn binder() -> Check {
-    let filesystems = fs::read_to_string("/proc/filesystems").unwrap_or_default();
-    if filesystems
-        .lines()
-        .any(|line| line.trim_end().ends_with("binder"))
-    {
+    if facts::has_binder() {
         Check::new(Level::Ok, "binder", "binderfs available")
     } else {
-        Check::new(
-            Level::Fail,
-            "binder",
-            "not loaded: run `sudo modprobe binder_linux`",
-        )
+        Check::new(Level::Fail, "binder", "not loaded: run `annex setup`")
     }
 }
 
 fn binder_on_boot() -> Check {
-    let is_configured = fs::read_dir("/etc/modules-load.d")
-        .into_iter()
-        .flatten()
-        .flatten()
-        .filter_map(|entry| fs::read_to_string(entry.path()).ok())
-        .any(|contents| contents.lines().any(|line| line.trim() == "binder_linux"));
-    if is_configured {
+    if facts::has_binder_at_boot() {
         Check::new(Level::Ok, "binder on boot", "loaded at boot")
     } else {
         Check::new(
             Level::Warn,
             "binder on boot",
-            "not loaded at boot: run `echo binder_linux | sudo tee /etc/modules-load.d/binder.conf`",
+            "not loaded at boot: run `annex setup`",
         )
     }
 }
@@ -121,11 +114,7 @@ fn shared_memory() -> Check {
 fn docker_access() -> Check {
     match docker::run(&["info", "--format", "{{.ServerVersion}}"]) {
         Ok(version) => Check::new(Level::Ok, "docker", format!("server {version}")),
-        Err(_) => Check::new(
-            Level::Fail,
-            "docker",
-            "unreachable: install Docker and add yourself to the docker group",
-        ),
+        Err(_) => Check::new(Level::Fail, "docker", "unreachable: run `annex setup`"),
     }
 }
 
@@ -169,14 +158,21 @@ fn adb_key() -> Check {
     }
 }
 
-fn scrcpy() -> Check {
-    match which("scrcpy") {
-        Some(path) => Check::new(Level::Ok, "scrcpy", path.display().to_string()),
-        None => Check::new(
+fn windows() -> Check {
+    let Ok(helper) = Scrcpy::locate() else {
+        return Check::new(
             Level::Warn,
-            "scrcpy",
-            "not installed: `annex show` needs it",
+            "windows",
+            "helper missing: `annex show`, `annex open` and clipboard sync need it; run `annex setup`",
+        );
+    };
+    match (helper.version(), helper.server()) {
+        (Ok(_), Ok(_)) => Check::new(
+            Level::Ok,
+            "windows",
+            "screen, app windows and clipboard ready",
         ),
+        (Err(error), _) | (_, Err(error)) => Check::new(Level::Warn, "windows", error.to_string()),
     }
 }
 
@@ -197,14 +193,51 @@ fn memory() -> Check {
 }
 
 fn image() -> Check {
-    let image = AndroidVersion::Android15.image();
-    if docker::succeeds(&["image", "inspect", image]) {
-        Check::new(Level::Ok, "image", format!("{image} downloaded"))
+    if docker::succeeds(&["image", "inspect", AndroidVersion::Android15.image()]) {
+        Check::new(Level::Ok, "image", "Android 15 downloaded")
     } else {
         Check::new(
             Level::Warn,
             "image",
-            format!("{image} missing: first `annex up` downloads ~3 GB"),
+            "Android 15 missing: `annex setup` or the first `annex up` downloads about 3 GB",
         )
+    }
+}
+
+fn window_mode() -> Check {
+    if !waydroid::is_installed() || !waydroid::is_initialized() {
+        return Check::new(
+            Level::Ok,
+            "window mode",
+            "not set up (optional: native app windows): `annex setup --window-mode`",
+        );
+    }
+    Check::new(
+        Level::Ok,
+        "window mode",
+        "ready: `annex up <name> --mode window`",
+    )
+}
+
+fn desktop_clipboard() -> Check {
+    if env::var_os("DISPLAY").is_some() {
+        Check::new(Level::Ok, "clipboard", "X11/XWayland clipboard reachable")
+    } else {
+        Check::new(
+            Level::Warn,
+            "clipboard",
+            "DISPLAY not set: the bridge syncs clipboards between instances only",
+        )
+    }
+}
+
+fn desktop_notifications() -> Check {
+    match which("notify-send") {
+        Some(_) => Check::new(Level::Ok, "notifications", "notify-send available"),
+        None => Check::new(
+            Level::Warn,
+            "notifications",
+            "missing: `annex setup --bridge` installs them",
+        ),
     }
 }
