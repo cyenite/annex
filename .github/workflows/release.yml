@@ -1,0 +1,47 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release:
+    name: Build and publish
+    permissions:
+      contents: write
+    # The oldest supported runner, so the binary links against an older glibc and runs on more distros.
+    runs-on: ubuntu-22.04
+    steps:
+      # Pinned to commits, and no build cache: this job can write releases, so nothing it runs
+      # may change under a moved tag or a poisoned cache.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - run: cargo test --locked
+      - run: cargo build --release --locked
+      - name: Package
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          archive="annex-${version}-x86_64-linux"
+          mkdir "$archive"
+          cp target/release/annex README.md LICENSE CHANGELOG.md "$archive/"
+          tar czf "$archive.tar.gz" "$archive"
+          sha256sum "$archive.tar.gz" > "$archive.tar.gz.sha256"
+          # The changelog section for this version becomes the release notes.
+          awk -v version="$version" '
+            $0 ~ "^## " { if (found) exit; found = ($2 == version) ; next }
+            found { print }
+          ' CHANGELOG.md > notes.md
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "annex $GITHUB_REF_NAME" \
+            --notes-file notes.md \
+            annex-*.tar.gz annex-*.tar.gz.sha256

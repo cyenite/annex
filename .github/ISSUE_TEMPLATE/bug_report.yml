@@ -1,0 +1,43 @@
+name: Bug report
+description: Something annex did wrong or failed to do
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: The command you ran, what you expected and what happened instead.
+      placeholder: |
+        I ran `annex up pixel` and expected ... but got ...
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: annex doctor
+      description: The full output of `annex doctor`.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Output and logs
+      description: >
+        The command's full output. For bridge problems, add `annex bridge run --verbose` output.
+        Window and session logs are in ~/.local/share/annex/logs.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: annex version
+      description: The output of `annex --version`.
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: Distribution and desktop
+      placeholder: Ubuntu 26.04, GNOME 50 on Wayland
+    validations:
+      required: true
