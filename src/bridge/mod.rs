@@ -8,6 +8,7 @@ mod hub;
 mod notifications;
 mod protocol;
 pub mod service;
+mod tray;
 
 use std::collections::HashMap;
 use std::net::TcpStream;
@@ -19,7 +20,8 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 
 use crate::adb::Adb;
-use crate::instance::{self, Instance, Mode, State};
+use crate::instance::{Instance, Mode, State};
+use crate::{instance, launcher};
 use device::{ServerJar, Session};
 use hub::Event;
 use protocol::{DeviceMessage, read_message};
@@ -56,13 +58,34 @@ pub fn run(adb: &Adb, is_verbose: bool) -> Result<()> {
         attached: HashMap::new(),
         retry_after: HashMap::new(),
     };
+    if let Err(error) = launcher::install_icon() {
+        eprintln!("could not install annex's icon: {error:#}");
+    }
+    let menu = match ksni::blocking::TrayMethods::spawn(tray::Tray::default()) {
+        Ok(menu) => Some(menu),
+        Err(error) => {
+            eprintln!("panel menu unavailable (no tray host on the session bus): {error}");
+            None
+        }
+    };
+    let mut shown: Vec<tray::Entry> = Vec::new();
     eprintln!("bridge running");
     loop {
         if hub.is_finished() {
             return hub.join().expect("clipboard hub panicked");
         }
         match instance::list() {
-            Ok(instances) => bridge.reconcile(&instances),
+            Ok(instances) => {
+                bridge.reconcile(&instances);
+                let entries: Vec<tray::Entry> =
+                    instances.iter().map(tray::Entry::from_instance).collect();
+                if let Some(menu) = &menu
+                    && entries != shown
+                {
+                    menu.update(|tray| tray.entries = entries.clone());
+                    shown = entries;
+                }
+            }
             Err(error) => eprintln!("could not list instances: {error:#}"),
         }
         sleep(RECONCILE_INTERVAL);

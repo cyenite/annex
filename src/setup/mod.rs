@@ -135,6 +135,11 @@ fn print_next_steps(ui: &Ui, added_group: bool, options: Options) {
             console::style("annex up desk --mode window").cyan().bold()
         );
     }
+    if options.bridge && !facts::has_tray_host() {
+        ui.note(
+            "Your panel shows no app indicators, so the bridge's menu stays hidden: on GNOME, enable the AppIndicator extension.",
+        );
+    }
     if added_group {
         ui.note(
             "Log out and back in (or run `newgrp docker`) so your user can run containers without sudo.",

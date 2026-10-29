@@ -107,6 +107,17 @@ fn is_in_docker_group() -> bool {
         })
 }
 
+/// Whether a panel can show the bridge's menu: KDE has a StatusNotifierWatcher built in, GNOME
+/// only with its AppIndicator extension enabled.
+pub fn has_tray_host() -> bool {
+    Command::new("busctl")
+        .args(["--user", "status", "org.kde.StatusNotifierWatcher"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
 pub fn current_user() -> Option<String> {
     env::var("USER").ok().or_else(|| env::var("LOGNAME").ok())
 }

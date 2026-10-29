@@ -15,6 +15,9 @@ use crate::redroid::Display;
         Flutter and adb see each one as an ordinary device."
 )]
 pub struct Cli {
+    /// Report the outcome as a desktop notification, for launchers and menus with no terminal
+    #[arg(long, global = true, hide = true)]
+    pub notify: bool,
     #[command(subcommand)]
     pub command: Commands,
 }
@@ -78,6 +81,14 @@ pub enum Commands {
         /// The instance [default: `default`, or the only running instance]
         name: Option<String>,
     },
+    /// Start an instance if needed, then open its screen; what its app launcher runs
+    OpenWindow {
+        /// The instance [default: `default`, or the only running instance]
+        name: Option<String>,
+    },
+    /// Add or remove an instance's entry in your desktop's app launcher
+    #[command(subcommand)]
+    Launcher(LauncherCommand),
     /// Open one app in a desktop window of its own
     #[command(
         override_usage = "annex open [NAME] <PACKAGE>",
@@ -156,6 +167,20 @@ pub enum SnapCommand {
     },
     /// List an instance's snapshots
     Ls {
+        /// The instance [default: `default`, or the only running instance]
+        name: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum LauncherCommand {
+    /// Add the launcher entry (`annex up` does this for you)
+    Install {
+        /// The instance [default: `default`, or the only running instance]
+        name: Option<String>,
+    },
+    /// Remove the launcher entry (`annex rm` does this for you)
+    Remove {
         /// The instance [default: `default`, or the only running instance]
         name: Option<String>,
     },

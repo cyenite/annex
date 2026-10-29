@@ -3,14 +3,15 @@ use anyhow::Result;
 use crate::adb::{Adb, validate_package};
 use crate::instance::{Backend, Instance};
 use crate::scrcpy::Scrcpy;
-use crate::waydroid;
+use crate::{launcher, waydroid};
 
 /// Opens a window with the instance's whole screen.
 pub fn show(adb: &Adb, instance: &Instance) -> Result<()> {
     match &instance.backend {
         Backend::Redroid(_) => {
             let title = format!("annex: {}", instance.name);
-            Scrcpy::locate()?.open_window(adb, &instance.serial, &title, &[])
+            let app_id = launcher::app_id(&instance.name);
+            Scrcpy::locate()?.open_window(adb, &instance.serial, &title, &app_id, &[])
         }
         Backend::Waydroid { .. } => waydroid::show(),
     }
@@ -34,7 +35,8 @@ pub fn open(adb: &Adb, instance: &Instance, package: &str) -> Result<()> {
             let title = format!("annex: {}: {package}", instance.name);
             let display = format!("--new-display={}", container.display);
             let app = format!("--start-app={package}");
-            scrcpy.open_window(adb, &instance.serial, &title, &[&display, &app])
+            let app_id = launcher::app_id(&instance.name);
+            scrcpy.open_window(adb, &instance.serial, &title, &app_id, &[&display, &app])
         }
         Backend::Waydroid { .. } => waydroid::open(package),
     }

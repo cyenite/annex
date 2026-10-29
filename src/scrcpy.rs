@@ -47,7 +47,16 @@ impl Scrcpy {
     }
 
     /// Opens a scrcpy window and waits briefly so a startup failure is reported, not lost.
-    pub fn open_window(&self, adb: &Adb, serial: &str, title: &str, extra: &[&str]) -> Result<()> {
+    /// `app_id` becomes the window's class and Wayland app id, which docks match against the
+    /// launcher's StartupWMClass to group the window under it.
+    pub fn open_window(
+        &self,
+        adb: &Adb,
+        serial: &str,
+        title: &str,
+        app_id: &str,
+        extra: &[&str],
+    ) -> Result<()> {
         let slug: String = title
             .chars()
             .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
@@ -60,7 +69,9 @@ impl Scrcpy {
             Command::new(&self.path)
                 .args(["--serial", serial, "--window-title", title, "--no-audio"])
                 .args(extra)
-                .env("ADB", adb.path()),
+                .env("ADB", adb.path())
+                .env("SDL_VIDEO_X11_WMCLASS", app_id)
+                .env("SDL_VIDEO_WAYLAND_WMCLASS", app_id),
             &log,
         )?;
         sleep(STARTUP);

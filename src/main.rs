@@ -1,10 +1,12 @@
 mod adb;
 mod bridge;
 mod cli;
+mod desktop;
 mod docker;
 mod doctor;
 mod gpu;
 mod instance;
+mod launcher;
 mod paths;
 mod process;
 mod redroid;
@@ -16,23 +18,45 @@ mod window;
 
 use std::io;
 use std::process::ExitCode;
+use std::sync::Mutex;
 use std::time::Instant;
 
 use anyhow::{Result, bail};
 use clap::{CommandFactory, Parser};
 
 use adb::Adb;
-use cli::{BridgeCommand, Cli, Commands, SnapCommand};
-use instance::{Backend, UpOptions};
+use cli::{BridgeCommand, Cli, Commands, LauncherCommand, SnapCommand};
+use instance::{Backend, State, UpOptions};
+
+/// The last outcome line a command printed, which `--notify` repeats as a notification.
+static OUTCOME: Mutex<Option<String>> = Mutex::new(None);
 
 fn main() -> ExitCode {
-    match run(Cli::parse().command) {
-        Ok(code) => code,
+    let cli = Cli::parse();
+    // A launcher has no terminal, so its command always reports through notifications.
+    let should_notify = cli.notify || matches!(cli.command, Commands::OpenWindow { .. });
+    match run(cli.command) {
+        Ok(code) => {
+            let outcome = OUTCOME.lock().expect("outcome lock").take();
+            if let Some(outcome) = outcome.filter(|_| should_notify) {
+                desktop::notify("annex", &outcome);
+            }
+            code
+        }
         Err(error) => {
             eprintln!("error: {error:#}");
+            if should_notify {
+                desktop::notify("annex: something went wrong", &format!("{error:#}"));
+            }
             ExitCode::FAILURE
         }
     }
+}
+
+/// Prints a command's result and remembers it for `--notify`.
+fn report(outcome: String) {
+    println!("{outcome}");
+    *OUTCOME.lock().expect("outcome lock") = Some(outcome);
 }
 
 fn run(command: Commands) -> Result<ExitCode> {
@@ -90,33 +114,62 @@ fn run(command: Commands) -> Result<ExitCode> {
                 android,
             };
             let instance = instance::up(&Adb::locate()?, &name, options)?;
-            println!(
+            launcher::refresh_or_install(&instance);
+            report(format!(
                 "{name} ready at {} (Android {}) in {}",
                 instance.serial,
                 instance.android(),
                 elapsed()
-            );
+            ));
         }
         Commands::Down { name } => {
             let name = instance::resolve(name)?;
             instance::down(&Adb::locate()?, &name)?;
-            println!("{name} stopped in {}", elapsed());
+            report(format!("{name} stopped in {}", elapsed()));
         }
         Commands::Freeze { name } => {
             let name = instance::resolve(name)?;
             instance::freeze(&name)?;
-            println!("{name} frozen in {}", elapsed());
+            report(format!("{name} frozen in {}", elapsed()));
         }
         Commands::Thaw { name } => {
             let name = instance::resolve(name)?;
             instance::thaw(&Adb::locate()?, &name)?;
-            println!("{name} thawed in {}", elapsed());
+            report(format!("{name} thawed in {}", elapsed()));
         }
         Commands::Ls => list()?,
+        Commands::OpenWindow { name } => {
+            let name = instance::resolve(name)?;
+            let adb = Adb::locate()?;
+            match instance::find(&name)?.map(|instance| instance.state) {
+                Some(State::Running) => {}
+                Some(State::Frozen) => instance::thaw(&adb, &name)?,
+                Some(State::Stopped) | None => {
+                    desktop::notify("annex", &format!("starting {name}..."));
+                    let instance = instance::up(&adb, &name, UpOptions::default())?;
+                    launcher::refresh_or_install(&instance);
+                }
+            }
+            window::show(&adb, &instance::require_running(&name)?)?;
+        }
+        Commands::Launcher(LauncherCommand::Install { name }) => {
+            let instance = instance::require(&instance::resolve(name)?)?;
+            let path = launcher::install(&instance)?;
+            report(format!(
+                "added {} to your app launcher ({})",
+                instance.name,
+                path.display()
+            ));
+        }
+        Commands::Launcher(LauncherCommand::Remove { name }) => {
+            let name = instance::resolve(name)?;
+            launcher::remove(&name)?;
+            report(format!("removed {name} from your app launcher"));
+        }
         Commands::Show { name } => {
             let name = instance::resolve(name)?;
             window::show(&Adb::locate()?, &instance::require_running(&name)?)?;
-            println!("opened a window for {name}");
+            report(format!("opened a window for {name}"));
         }
         Commands::Open { args } => {
             let (name, rest) = instance::split_name(args, 1)?;
@@ -124,7 +177,7 @@ fn run(command: Commands) -> Result<ExitCode> {
                 bail!("give one app package name, like com.android.settings");
             };
             window::open(&Adb::locate()?, &instance::require_running(&name)?, package)?;
-            println!("opened {package} on {name}");
+            report(format!("opened {package} on {name}"));
         }
         Commands::Install { args } => {
             let (name, apks) = instance::split_name(args, 1)?;
@@ -171,11 +224,12 @@ fn run(command: Commands) -> Result<ExitCode> {
             let target = to.map_or("first boot".to_string(), |label| {
                 format!("snapshot {label}")
             });
-            println!("{name} reset to {target} in {}", elapsed());
+            report(format!("{name} reset to {target} in {}", elapsed()));
         }
         Commands::Rm { name, keep_data } => {
             instance::remove(&Adb::locate()?, &name, keep_data)?;
-            println!("{name} removed");
+            launcher::remove(&name)?;
+            report(format!("{name} removed"));
         }
         Commands::Snap(SnapCommand::Save { args }) => {
             let (name, rest) = instance::split_name(args, 1)?;
@@ -183,7 +237,8 @@ fn run(command: Commands) -> Result<ExitCode> {
                 bail!("give one label for the snapshot");
             };
             let path = snapshot::save(&name, label)?;
-            println!("saved {} in {}", path.display(), elapsed());
+            launcher::refresh(&instance::require(&name)?);
+            report(format!("saved {} in {}", path.display(), elapsed()));
         }
         Commands::Snap(SnapCommand::Ls { name }) => {
             let name = instance::resolve(name)?;

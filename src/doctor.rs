@@ -60,6 +60,7 @@ pub fn run() -> Vec<Check> {
         window_mode(),
         desktop_clipboard(),
         desktop_notifications(),
+        panel_menu(),
     ]
 }
 
@@ -239,5 +240,21 @@ fn desktop_notifications() -> Check {
             "notifications",
             "missing: `annex setup --bridge` installs them",
         ),
+    }
+}
+
+fn panel_menu() -> Check {
+    if facts::has_tray_host() {
+        Check::new(
+            Level::Ok,
+            "panel menu",
+            "the bridge's menu can show in your panel",
+        )
+    } else {
+        Check::new(
+            Level::Warn,
+            "panel menu",
+            "your panel shows no app indicators: on GNOME, enable the AppIndicator extension",
+        )
     }
 }
