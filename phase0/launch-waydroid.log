@@ -1,0 +1,45 @@
+Stopping: com.solutech.sat.v4.dev
+Starting: Intent { cmp=com.solutech.sat.v4.dev/com.solutech.sat.v4.MainActivity }
+Status: ok
+LaunchState: UNKNOWN (0)
+Activity: com.solutech.sat.v4.dev/com.solutech.sat.v4.MainActivity
+WaitTime: 4208
+Complete
+Stopping: com.solutech.sat.v4.dev
+Starting: Intent { cmp=com.solutech.sat.v4.dev/com.solutech.sat.v4.MainActivity }
+Status: ok
+LaunchState: UNKNOWN (0)
+Activity: com.solutech.sat.v4.dev/com.solutech.sat.v4.MainActivity
+WaitTime: 3817
+Complete
+Stopping: com.solutech.sat.v4.dev
+Starting: Intent { cmp=com.solutech.sat.v4.dev/com.solutech.sat.v4.MainActivity }
+Status: ok
+LaunchState: UNKNOWN (0)
+Activity: com.solutech.sat.v4.dev/com.solutech.sat.v4.MainActivity
+WaitTime: 2820
+Complete
+Stopping: dev.shorecat.shorecat_code_push_example
+Starting: Intent { cmp=dev.shorecat.shorecat_code_push_example/.MainActivity }
+Status: ok
+LaunchState: COLD
+Activity: dev.shorecat.shorecat_code_push_example/.MainActivity
+TotalTime: 536
+WaitTime: 539
+Complete
+Stopping: dev.shorecat.shorecat_code_push_example
+Starting: Intent { cmp=dev.shorecat.shorecat_code_push_example/.MainActivity }
+Status: ok
+LaunchState: COLD
+Activity: dev.shorecat.shorecat_code_push_example/.MainActivity
+TotalTime: 572
+WaitTime: 576
+Complete
+Stopping: dev.shorecat.shorecat_code_push_example
+Starting: Intent { cmp=dev.shorecat.shorecat_code_push_example/.MainActivity }
+Status: ok
+LaunchState: COLD
+Activity: dev.shorecat.shorecat_code_push_example/.MainActivity
+TotalTime: 490
+WaitTime: 526
+Complete

@@ -1,0 +1,26 @@
+Stopping: com.solutech.sat.v4.stg
+Starting: Intent { cmp=com.solutech.sat.v4.stg/com.solutech.sat.v4.MainActivity }
+Status: ok
+LaunchState: COLD
+Activity: com.android.permissioncontroller/.permission.ui.GrantPermissionsActivity
+TotalTime: 4362
+WaitTime: 4366
+Complete
+Stopping: com.solutech.sat.v4.stg
+Starting: Intent { cmp=com.solutech.sat.v4.stg/com.solutech.sat.v4.MainActivity }
+Warning: Activity not started, intent has been delivered to currently running top-most instance.
+Status: ok
+LaunchState: UNKNOWN (0)
+Activity: com.android.permissioncontroller/.permission.ui.GrantPermissionsActivity
+TotalTime: 0
+WaitTime: 6
+Complete
+Stopping: com.solutech.sat.v4.stg
+Starting: Intent { cmp=com.solutech.sat.v4.stg/com.solutech.sat.v4.MainActivity }
+Warning: Activity not started, intent has been delivered to currently running top-most instance.
+Status: ok
+LaunchState: UNKNOWN (0)
+Activity: com.android.permissioncontroller/.permission.ui.GrantPermissionsActivity
+TotalTime: 0
+WaitTime: 8
+Complete

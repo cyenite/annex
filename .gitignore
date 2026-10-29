@@ -1,0 +1,5 @@
+/target
+.docs/
+phase0/*.apk
+phase0/*.log
+!phase0/launch-*.log

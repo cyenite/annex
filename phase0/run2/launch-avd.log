@@ -1,0 +1,21 @@
+Stopping: com.solutech.sat.v4.stg
+Starting: Intent { cmp=com.solutech.sat.v4.stg/com.solutech.sat.v4.MainActivity }
+Status: timeout
+LaunchState: UNKNOWN (-1)
+Activity: com.solutech.sat.v4.stg/com.solutech.sat.v4.MainActivity
+WaitTime: 15808
+Complete
+Stopping: com.solutech.sat.v4.stg
+Starting: Intent { cmp=com.solutech.sat.v4.stg/com.solutech.sat.v4.MainActivity }
+Status: timeout
+LaunchState: UNKNOWN (-1)
+Activity: com.solutech.sat.v4.stg/com.solutech.sat.v4.MainActivity
+WaitTime: 14279
+Complete
+Stopping: com.solutech.sat.v4.stg
+Starting: Intent { cmp=com.solutech.sat.v4.stg/com.solutech.sat.v4.MainActivity }
+Status: timeout
+LaunchState: UNKNOWN (-1)
+Activity: com.solutech.sat.v4.stg/com.solutech.sat.v4.MainActivity
+WaitTime: 15044
+Complete
