@@ -25,6 +25,7 @@ All notable changes to annex are recorded here. The format follows [Keep a Chang
 
 - `annex ls` shows each instance's mode (container or window).
 - Messages, help and `doctor` describe modes and capabilities instead of naming the projects behind them.
+- `annex doctor` colours its status labels on a terminal (plain when piped or with NO_COLOR).
 - adb commands that can block (on a frozen or half-booted instance) now time out.
 - `annex open` on Redroid switches the instance's adbd to root the first time, because Redroid's shell user can't create the trusted display scrcpy needs.
 

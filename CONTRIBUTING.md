@@ -39,6 +39,7 @@ You need Rust 1.88 or newer. To try your build against real instances you also n
 | `src/process.rs` | Running commands with timeouts, detached processes, log tails |
 | `src/doctor.rs`, `src/gpu.rs` | Machine checks |
 | `scripts/third-party-crates.sh` | Regenerates the crate table in `THIRD_PARTY_NOTICES.md` |
+| `scripts/readme-images.py`, `docs/images/` | Renders the README's images from real captured output (usage in the script) |
 | `phase0/` | The benchmark that motivated the design; not part of the build |
 
 ## Before you open a pull request

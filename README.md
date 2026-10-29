@@ -1,9 +1,17 @@
-# annex
+<p align="center">
+  <img src="assets/annex.svg" alt="" width="96">
+</p>
 
-[![CI](https://github.com/cyenite/annex/actions/workflows/ci.yml/badge.svg)](https://github.com/cyenite/annex/actions/workflows/ci.yml)
-[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+<h1 align="center">annex</h1>
+
+<p align="center">
+  <a href="https://github.com/cyenite/annex/actions/workflows/ci.yml"><img src="https://github.com/cyenite/annex/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License: Apache-2.0"></a>
+</p>
 
 **Fast Android instances for Linux developers.** An instance boots in about 20 seconds, freezes and thaws in a fifth of a second, and shows up in Android Studio, Flutter and adb as an ordinary device.
+
+<img src="docs/images/hero.png" alt="A terminal running annex up, ls, freeze, thaw, snap save and install, next to the instance's Android 15 home screen" width="100%">
 
 annex runs Android in a container on your own kernel instead of a virtual machine. On the reference machine, the edit, install and launch loop was about 8x faster than an Android Studio emulator, and idle memory was about a third.
 
@@ -48,9 +56,13 @@ Tagged releases also publish a prebuilt x86_64 Linux binary on the [Releases pag
 - with `--bridge`, run the desktop bridge with your session;
 - with `--window-mode`, set up window mode.
 
+<img src="docs/images/setup.png" alt="annex setup listing what is already set up, the one step that needs sudo and the step that doesn't" width="100%">
+
 sudo asks for your password once; annex never sees it. Setup is safe to re-run: anything already in place is skipped. `--dry-run` shows the plan without changing anything, `--yes` skips the question for scripts, and `--repair` resets window mode's system service when it gets out of sync.
 
 You can also check without changing anything: `annex doctor`.
+
+<img src="docs/images/doctor.png" alt="annex doctor reporting each requirement as ok or warn" width="100%">
 
 ### Requirements
 

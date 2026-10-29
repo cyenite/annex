@@ -26,6 +26,16 @@ impl Level {
             Self::Fail => "FAIL",
         }
     }
+
+    /// The label coloured for a terminal; console drops the colour when piped or NO_COLOR is set.
+    fn styled(self) -> console::StyledObject<&'static str> {
+        let label = console::style(self.label());
+        match self {
+            Self::Ok => label.green(),
+            Self::Warn => label.yellow(),
+            Self::Fail => label.red().bold(),
+        }
+    }
 }
 
 pub struct Check {
@@ -68,7 +78,7 @@ pub fn print(checks: &[Check]) {
     for check in checks {
         println!(
             "[{}] {:<14} {}",
-            check.level.label(),
+            check.level.styled(),
             check.name,
             check.detail
         );
