@@ -38,6 +38,25 @@ impl Adb {
         &self.path
     }
 
+    /// The public half of the key this adb authenticates with; the adb server creates it on first start.
+    pub fn public_key(&self) -> Result<PathBuf> {
+        let directory = env::var_os("ANDROID_USER_HOME")
+            .map(PathBuf::from)
+            .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".android")))
+            .context("neither ANDROID_USER_HOME nor HOME is set")?;
+        let key = directory.join("adbkey.pub");
+        if !key.is_file() {
+            self.quiet(&["start-server"]);
+        }
+        if !key.is_file() {
+            bail!(
+                "no adb key at {}: run `adb start-server` once",
+                key.display()
+            );
+        }
+        Ok(key)
+    }
+
     pub fn connect(&self, serial: &str) -> Result<()> {
         let started = Instant::now();
         loop {

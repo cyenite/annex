@@ -11,6 +11,11 @@ use crate::{docker, gpu};
 const PORTS: std::ops::Range<u16> = 5600..5700;
 const BOOT_TIMEOUT: Duration = Duration::from_secs(180);
 const PULL_ATTEMPTS: u32 = 3;
+const CONTAINER_CONFIG: &str = "2";
+const ADB_KEYS_PATH: &str = "/product/etc/security/adb_keys";
+// The simulated Bluetooth HAL listens on TCP 6111/6211/6311 on every interface, reachable by any
+// local user through the Docker bridge; masking its init script keeps it from starting.
+const BLUETOOTH_SIM_INIT: &str = "/vendor/etc/init/android.hardware.bluetooth@1.1-service.sim.rc";
 
 #[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum AndroidVersion {
@@ -83,6 +88,7 @@ impl State {
 pub struct Instance {
     pub port: u16,
     pub name: String,
+    pub config: String,
     pub state: State,
     pub android: AndroidVersion,
 }
@@ -96,16 +102,23 @@ impl Instance {
         container_name(&self.name)
     }
 
+    pub fn is_outdated(&self) -> bool {
+        self.config != CONTAINER_CONFIG
+    }
+
     fn parse(line: &str) -> Result<Self> {
         let fields: Vec<&str> = line.split('\t').collect();
-        let [state, name, android, port] = fields[..] else {
+        let [state, name, android, port, ..] = fields[..] else {
             bail!("unexpected docker output: {line}");
         };
+        // Containers from before the config label have an empty last column, which trimming drops.
+        let config = fields.get(4).copied().unwrap_or_default();
         Ok(Self {
             port: port
                 .parse()
                 .with_context(|| format!("bad adb port label on {name}"))?,
             name: name.to_string(),
+            config: config.to_string(),
             state: State::from_docker(state),
             android: AndroidVersion::from_label(android)
                 .with_context(|| format!("unsupported Android version {android} on {name}"))?,
@@ -126,7 +139,7 @@ pub fn validate_name(name: &str) -> Result<()> {
 }
 
 pub fn list() -> Result<Vec<Instance>> {
-    let format = "{{.State}}\t{{.Label \"annex.name\"}}\t{{.Label \"annex.android\"}}\t{{.Label \"annex.adb-port\"}}";
+    let format = "{{.State}}\t{{.Label \"annex.name\"}}\t{{.Label \"annex.android\"}}\t{{.Label \"annex.adb-port\"}}\t{{.Label \"annex.config\"}}";
     let output = docker::run(&[
         "ps",
         "-a",
@@ -162,10 +175,16 @@ pub fn up(adb: &Adb, name: &str, android: Option<AndroidVersion>) -> Result<Inst
                     wanted.label()
                 );
             }
-            match existing.state {
-                State::Running => {}
-                State::Paused => docker::run(&["unpause", &existing.container()]).map(drop)?,
-                State::Stopped => docker::run(&["start", &existing.container()]).map(drop)?,
+            if existing.is_outdated() {
+                println!("updating {name}'s container to the current configuration (data kept)");
+                rebuild(adb, &existing)?;
+                docker::run(&["start", &existing.container()])?;
+            } else {
+                match existing.state {
+                    State::Running => {}
+                    State::Paused => docker::run(&["unpause", &existing.container()]).map(drop)?,
+                    State::Stopped => docker::run(&["start", &existing.container()]).map(drop)?,
+                }
             }
             existing
         }
@@ -173,7 +192,7 @@ pub fn up(adb: &Adb, name: &str, android: Option<AndroidVersion>) -> Result<Inst
             let android = android.unwrap_or(AndroidVersion::Android15);
             ensure_image(android)?;
             let port = free_port(&list()?)?;
-            create(name, android, port)?;
+            create(adb, name, android, port)?;
             docker::run(&["start", &container_name(name)])?;
             require(name)?
         }
@@ -227,7 +246,14 @@ pub fn recreate(adb: &Adb, instance: &Instance) -> Result<()> {
     adb.disconnect(&instance.serial());
     docker::run(&["rm", "--force", &instance.container()])?;
     docker::run(&["volume", "rm", "--force", &volume_name(&instance.name)])?;
-    create(&instance.name, instance.android, instance.port)
+    create(adb, &instance.name, instance.android, instance.port)
+}
+
+/// Recreates the container with the current configuration on its existing data volume.
+fn rebuild(adb: &Adb, instance: &Instance) -> Result<()> {
+    adb.disconnect(&instance.serial());
+    docker::run(&["rm", "--force", &instance.container()])?;
+    create(adb, &instance.name, instance.android, instance.port)
 }
 
 pub fn start_and_connect(adb: &Adb, instance: &Instance) -> Result<()> {
@@ -236,19 +262,25 @@ pub fn start_and_connect(adb: &Adb, instance: &Instance) -> Result<()> {
     adb.connect(&instance.serial())
 }
 
-fn create(name: &str, android: AndroidVersion, port: u16) -> Result<()> {
+fn create(adb: &Adb, name: &str, android: AndroidVersion, port: u16) -> Result<()> {
     let gpu_mode = if gpu::has_hardware_rendering() {
         "host"
     } else {
         "guest"
     };
+    let public_key = adb.public_key()?;
     let container = container_name(name);
+    let key_mount = format!("{}:{ADB_KEYS_PATH}:ro", public_key.display());
     let name_label = format!("annex.name={name}");
     let port_label = format!("annex.adb-port={port}");
     let data_mount = format!("{}:/data", volume_name(name));
+    let config_label = format!("annex.config={CONTAINER_CONFIG}");
     let port_binding = format!("127.0.0.1:{port}:5555");
     let gpu_argument = format!("androidboot.redroid_gpu_mode={gpu_mode}");
     let android_label = format!("annex.android={}", android.label());
+    let bluetooth_mask = format!("type=bind,src=/dev/null,dst={BLUETOOTH_SIM_INIT},readonly");
+    // Redroid cannot boot without --privileged (its init needs writable sysfs and cgroups), so the
+    // container is root-equivalent: adbd must only accept the user's key, and nothing else may listen.
     docker::run(&[
         "create",
         "--privileged",
@@ -262,12 +294,19 @@ fn create(name: &str, android: AndroidVersion, port: u16) -> Result<()> {
         &android_label,
         "--label",
         &port_label,
+        "--label",
+        &config_label,
         "--volume",
         &data_mount,
+        "--volume",
+        &key_mount,
+        "--mount",
+        &bluetooth_mask,
         "--publish",
         &port_binding,
         android.image(),
         "androidboot.use_memfd=true",
+        "ro.adb.secure=1",
         &gpu_argument,
         "androidboot.redroid_width=1080",
         "androidboot.redroid_height=2400",

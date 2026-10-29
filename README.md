@@ -36,6 +36,16 @@ annex rm pixel                   delete the instance and its data
 
 Instances listen for adb on `127.0.0.1:5600` and up, outside the 5555-5585 range that adb scans for emulators.
 
+## Security
+
+Instances run as privileged containers (Redroid cannot boot otherwise), so they are root-equivalent on the host. annex keeps them closed to other local users:
+
+- adbd only accepts your adb key (`~/.android/adbkey.pub`); any other key is `unauthorized`, including through the container's Docker bridge IP.
+- Nothing else listens: the simulated Bluetooth service, which opens TCP ports, is disabled.
+- Snapshots, which contain every app's private data, are readable only by you.
+
+Anyone in the `docker` group can still open a shell in an instance, as with any container.
+
 ## Building
 
 ```

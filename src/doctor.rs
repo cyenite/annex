@@ -49,6 +49,7 @@ pub fn run() -> Vec<Check> {
         docker_access(),
         graphics(),
         adb(),
+        adb_key(),
         scrcpy(),
         memory(),
         image(),
@@ -154,6 +155,17 @@ fn adb() -> Check {
     match Adb::locate() {
         Ok(adb) => Check::new(Level::Ok, "adb", adb.path().display().to_string()),
         Err(error) => Check::new(Level::Fail, "adb", error.to_string()),
+    }
+}
+
+fn adb_key() -> Check {
+    match Adb::locate().and_then(|adb| adb.public_key()) {
+        Ok(key) => Check::new(
+            Level::Ok,
+            "adb key",
+            format!("{} (only this key can open instances)", key.display()),
+        ),
+        Err(error) => Check::new(Level::Fail, "adb key", error.to_string()),
     }
 }
 

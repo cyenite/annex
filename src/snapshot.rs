@@ -1,4 +1,5 @@
-use std::fs::{self, File};
+use std::fs::{self, DirBuilder, File, OpenOptions};
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::PathBuf;
 
 use anyhow::{Context, Result, bail};
@@ -17,7 +18,11 @@ pub fn save(name: &str, label: &str) -> Result<PathBuf> {
         .context("snapshot labels follow the same rules as instance names")?;
     let instance = instance::require(name)?;
     let directory = snapshot_dir(name);
-    fs::create_dir_all(&directory)?;
+    // Snapshots hold every app's private data, including login tokens.
+    DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(&directory)?;
     let path = directory.join(format!("{label}.tar"));
     let partial = directory.join(format!("{label}.tar.part"));
     let source = format!("{}:/data", instance.container());
@@ -27,7 +32,13 @@ pub fn save(name: &str, label: &str) -> Result<PathBuf> {
     if is_running {
         docker::run(&["pause", &instance.container()])?;
     }
-    let copied = docker::run_into(&["cp", "--archive", &source, "-"], File::create(&partial)?);
+    let archive = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(&partial)?;
+    let copied = docker::run_into(&["cp", "--archive", &source, "-"], archive);
     if is_running {
         docker::run(&["unpause", &instance.container()])?;
     }
