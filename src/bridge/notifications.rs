@@ -1,11 +1,11 @@
 use std::collections::HashSet;
-use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, sleep};
 use std::time::Duration;
 
 use crate::adb::Adb;
+use crate::desktop;
 
 const POLL_INTERVAL: Duration = Duration::from_secs(2);
 const ADB_TIMEOUT: Duration = Duration::from_secs(10);
@@ -149,6 +149,8 @@ fn is_quiet(flags: &str) -> bool {
     }
 }
 
+/// The title and text come from whatever app posted the notification, so they go through
+/// `notify_as`, which treats them as untrusted.
 fn show(name: &str, notification: Notification) {
     let app = format!("annex: {name}");
     let title = if notification.title.is_empty() {
@@ -156,22 +158,7 @@ fn show(name: &str, notification: Notification) {
     } else {
         notification.title
     };
-    let shown = Command::new("notify-send")
-        .args([
-            "--app-name",
-            &app,
-            "--icon",
-            "phone",
-            &title,
-            &notification.text,
-        ])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
-    if let Err(error) = shown {
-        eprintln!("{name}: could not show a notification: {error}");
-    }
+    desktop::notify_as(&app, "phone", &title, &notification.text);
 }
 
 #[cfg(test)]
