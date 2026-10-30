@@ -48,6 +48,26 @@ its download.
 - Projects: https://gtk.org and https://gitlab.gnome.org/GNOME/libadwaita
 - License: GNU Lesser General Public License version 2.1 or later
 
+## Included in annex: the GPS driver
+
+annex embeds a small GNSS driver (`android/gnss/`) that it mounts into each container-mode
+instance. Its source is annex's own; the binary also contains binder interface code generated
+from, and headers taken from, the Android Open Source Project, and the LLVM C++ standard library,
+linked statically.
+
+- Android Open Source Project (`android.hardware.gnss` interface, binder NDK headers):
+  https://source.android.com, Apache License 2.0
+
+```
+Copyright (C) The Android Open Source Project
+```
+
+- LLVM libc++: https://libcxx.llvm.org, Apache License 2.0 with LLVM Exceptions
+
+```
+Copyright (c) the LLVM Project contributors
+```
+
 ## Rust crates compiled into annex
 
 The annex and annex-manager binaries link the crates below (annex-manager adds the GTK bindings). Where a crate offers a choice of licenses, annex uses it

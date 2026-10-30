@@ -121,16 +121,19 @@ To target a specific instance, put its name first: `annex install pixel app-debu
 
 ### Location
 
-Apps see GPS and network location. An instance starts at the Android emulator's default position; move it, or let it follow this computer:
+Apps see GPS location, reported through Android's own GPS service like a real receiver, so it isn't marked as a mock location. An instance starts at the Android emulator's default position; move it, or let it follow this computer:
 
 ```sh
 annex location                          # where the instance is
 annex location -1.2921,36.8219          # a fixed position, kept across restarts and snapshots
+annex location "https://maps.app.goo.gl/..."   # or a Google Maps link, in quotes
 annex location host                     # this computer's location, through the desktop bridge
 annex location default                  # back to the default position
 ```
 
-`host` is opt-in per instance and needs the desktop bridge and your desktop's Location Services; GNOME asks once whether Annex may use your location. A computer without GPS finds itself from nearby Wi-Fi networks, so expect tens of meters at best and a few kilometers at worst, and no position at all until it has one. The position is only shared with instances you set to `host` from this computer; that choice is kept here, not in the instance, and `annex rm` withdraws it.
+To pin an exact spot, right-click it in Google Maps and click its coordinates to copy them, or copy the place's link; `annex location` takes either. A place link puts the instance on the place's pin.
+
+`host` is opt-in per instance and needs the desktop bridge and your desktop's Location Services; GNOME asks once whether Annex may use your location. A computer without GPS finds itself by looking up nearby Wi-Fi networks, and where the lookup service doesn't know them it guesses from the IP address, which can be tens of kilometers off. `annex location` shows how close the computer's position is; for anything that depends on being at an address, pin the spot instead. The position is only shared with instances you set to `host` from this computer; that choice is kept here, not in the instance, and `annex rm` withdraws it.
 
 ## On your desktop
 
@@ -192,7 +195,7 @@ Anyone in the `docker` group can still open a shell in an instance, as with any 
 ## Limits
 
 - **No Google Play.** Apps that need Play Integrity (banking, some games) will not run. Use a real device or an emulator for those. Firebase Cloud Messaging can't register either, so push notifications from a server never arrive; notifications an app posts itself still show.
-- **Location is simulated.** Positions come from annex, not a GPS receiver (see [Location](#location)), and are marked as mock locations, which apps can detect.
+- **Location is simulated.** Positions come from annex, not a GPS receiver (see [Location](#location)). There is GPS location but no network location.
 - **No Bluetooth.** Instances can't reach this computer's Bluetooth adapter yet.
 - **No Android 16 yet.** Its system services need a kernel feature (ashmem) that mainline kernels no longer have.
 - **x86_64 Linux only** for now.
@@ -206,7 +209,7 @@ Anyone in the `docker` group can still open a shell in an instance, as with any 
 | Android Studio loses its devices | Two adb versions on one machine kill each other's server. Point Studio and your PATH at the SDK's adb. |
 | A Flutter debug build crashes on launch | The APK was built for a phone (arm64). Let `flutter run` build for the instance, which is x86_64. |
 | Window mode won't freeze, saying its state is out of sync | Run `annex setup --repair`. |
-| An app says location is off although it's on in Settings | Run `annex up` for that instance. An instance that was already running when you updated annex gets GPS and network location on its next `annex up`. |
+| An app says location is off although it's on in Settings, or rejects it as a mock location | Run `annex up` for that instance: an instance that was already running when you updated annex gets its GPS on its next `annex up` (data kept). An app that recorded mock locations before may need its data cleared. |
 | No annex menu in the panel | On GNOME, enable the AppIndicator extension; `annex doctor` checks for it. |
 | Dozens of small drives fill the dock while an instance runs | Run `annex setup`. Android mounts each of its system modules as a disk image, and setup tells your desktop to ignore them. |
 

@@ -104,10 +104,15 @@ fn read_fix(connection: &Connection, path: &OwnedObjectPath) -> Result<Fix> {
         path.clone().into_inner(),
         "org.freedesktop.GeoClue2.Location",
     )?;
+    // GeoClue describes a lookup service's IP-address guess as "ipf fallback" (a GeoIP source as
+    // "GeoIP"), even when it was asked with Wi-Fi networks.
+    let description: String = location.get_property("Description")?;
+    let description = description.to_lowercase();
     Ok(Fix {
         accuracy: location.get_property("Accuracy")?,
         latitude: location.get_property("Latitude")?,
         longitude: location.get_property("Longitude")?,
+        is_from_ip: description.contains("ipf") || description.contains("geoip"),
     })
 }
 

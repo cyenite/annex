@@ -121,12 +121,15 @@ pub enum Commands {
     },
     /// Show or set where an instance's apps see it: a fixed position, or this computer's own
     #[command(
-        override_usage = "annex location [NAME] [default | host | LAT,LON]",
-        after_help = "With no position, shows the current one. `host` uses this computer's location \
-through the desktop bridge; your desktop asks once whether Annex may use it."
+        override_usage = "annex location [NAME] [default | host | LAT,LON | MAPS-LINK]",
+        after_help = "With no position, shows the current one. A position can be coordinates copied \
+from Google Maps (right-click a spot, then click its coordinates) or a Google Maps link, in quotes. \
+`host` uses this computer's location through the desktop bridge; your desktop asks once whether \
+Annex may use it. A computer without GPS often knows its location only roughly."
     )]
     Location {
-        /// An optional instance, then `default`, `host` or a position like -1.2921,36.8219
+        /// An optional instance, then `default`, `host`, a position like -1.2921,36.8219 or a
+        /// Google Maps link
         #[arg(value_name = "ARGS", num_args = 0..=2, allow_hyphen_values = true)]
         args: Vec<String>,
     },

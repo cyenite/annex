@@ -10,10 +10,12 @@ use clap::{CommandFactory, Parser};
 
 use annex_core::adb::Adb;
 use annex_core::instance::{self, Backend, State, UpOptions};
-use annex_core::location::{self, Location};
+use annex_core::location::{self, Fix, Location};
 use annex_core::{bridge, desktop, doctor, launcher, setup, snapshot, update, window};
 use cli::{BridgeCommand, Cli, Commands, LauncherCommand, SnapCommand};
 
+/// Beyond this, the computer's own location is too rough to place an instance at an address.
+const PRECISE_METERS: f64 = 100.0;
 /// The last outcome line a command printed, which `--notify` repeats as a notification.
 static OUTCOME: Mutex<Option<String>> = Mutex::new(None);
 
@@ -40,9 +42,24 @@ fn main() -> ExitCode {
 }
 
 /// Prints a command's result and remembers it for `--notify`.
+fn describe_accuracy(fix: Fix) -> String {
+    let distance = if fix.accuracy < 1000.0 {
+        format!("{:.0} m", fix.accuracy)
+    } else {
+        format!("{:.0} km", fix.accuracy / 1000.0)
+    };
+    if fix.is_from_ip {
+        format!("guessed from its IP address, so only to within about {distance}")
+    } else if fix.accuracy > PRECISE_METERS {
+        format!("accurate only to within about {distance}")
+    } else {
+        format!("accurate to within about {distance}")
+    }
+}
+
 fn describe_location(location: Location) -> String {
     match location {
-        Location::Default => "the default position (37.4220,-122.0841)".to_string(),
+        Location::Default => format!("the default position ({})", location::DEFAULT_POSITION),
         Location::Host => "this computer's location".to_string(),
         Location::Fixed { .. } => location.to_string(),
     }
@@ -247,10 +264,10 @@ fn run(command: Commands) -> Result<ExitCode> {
             let (name, rest) = instance::split_name(args, 1)?;
             let (name, wanted) = match &rest[..] {
                 [] => (name, None),
-                [value] => match value.parse::<Location>() {
+                [value] => match location::parse_input(value) {
                     Ok(wanted) => (name, Some(wanted)),
                     Err(_) if instance::find(value)?.is_some() => (value.clone(), None),
-                    Err(error) => bail!(error),
+                    Err(error) => return Err(error),
                 },
                 _ => bail!("give one instance and one position"),
             };
@@ -261,6 +278,23 @@ fn run(command: Commands) -> Result<ExitCode> {
                     println!(
                         "{name}: asks for this computer's location, which isn't shared with it: `annex location {name} host` shares it"
                     );
+                } else if current == Location::Host {
+                    match location::host_fix(&instance)? {
+                        Some(fix) => {
+                            println!(
+                                "{name}: this computer's location, {}",
+                                describe_accuracy(fix)
+                            );
+                            if fix.accuracy > PRECISE_METERS {
+                                println!(
+                                    "for an exact spot, pin one: `annex location {name} LAT,LON`, or a Google Maps link in quotes"
+                                );
+                            }
+                        }
+                        None => println!(
+                            "{name}: this computer's location, which the desktop bridge hasn't found yet"
+                        ),
+                    }
                 } else {
                     println!("{name}: {}", describe_location(current));
                 }
