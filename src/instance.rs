@@ -3,7 +3,7 @@ use clap::ValueEnum;
 
 use crate::adb::Adb;
 use crate::redroid::{self, Container, Display};
-use crate::waydroid;
+use crate::{location, waydroid};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 pub enum AndroidVersion {
@@ -230,7 +230,10 @@ pub fn remove(adb: &Adb, name: &str, keep_data: bool) -> Result<()> {
     let instance = require(name)?;
     adb.disconnect(&instance.serial);
     match &instance.backend {
-        Backend::Redroid(_) => redroid::remove(&instance, keep_data),
+        Backend::Redroid(_) => {
+            redroid::remove(&instance, keep_data)?;
+            location::forget(name)
+        }
         Backend::Waydroid { .. } => {
             println!(
                 "window mode keeps its Android data in a system install; the next window-mode instance starts with it"

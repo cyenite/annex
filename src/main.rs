@@ -257,7 +257,13 @@ fn run(command: Commands) -> Result<ExitCode> {
             let instance = instance::require_running(&name)?;
             let Some(wanted) = wanted else {
                 let current = location::get(&instance)?;
-                println!("{name}: {}", describe_location(current));
+                if current == Location::Host && !location::is_shared(&name) {
+                    println!(
+                        "{name}: asks for this computer's location, which isn't shared with it: `annex location {name} host` shares it"
+                    );
+                } else {
+                    println!("{name}: {}", describe_location(current));
+                }
                 return Ok(ExitCode::SUCCESS);
             };
             location::set(&instance, wanted)?;

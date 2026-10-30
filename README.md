@@ -130,7 +130,7 @@ annex location host                     # this computer's location, through the 
 annex location default                  # back to the default position
 ```
 
-`host` is opt-in per instance and needs the desktop bridge and your desktop's Location Services; GNOME asks once whether Annex may use your location. A computer without GPS finds itself from nearby Wi-Fi networks, so expect tens of meters at best and a few kilometers at worst, and no position at all until it has one. The position is only shared with instances set to `host`.
+`host` is opt-in per instance and needs the desktop bridge and your desktop's Location Services; GNOME asks once whether Annex may use your location. A computer without GPS finds itself from nearby Wi-Fi networks, so expect tens of meters at best and a few kilometers at worst, and no position at all until it has one. The position is only shared with instances you set to `host` from this computer; that choice is kept here, not in the instance, and `annex rm` withdraws it.
 
 ## On your desktop
 

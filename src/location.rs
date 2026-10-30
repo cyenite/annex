@@ -2,12 +2,15 @@
 //! this computer's own (shared by the desktop bridge).
 
 use std::fmt;
+use std::fs;
+use std::path::PathBuf;
 use std::str::FromStr;
 
 use anyhow::{Result, bail};
 
 use crate::docker;
 use crate::instance::{Backend, Instance};
+use crate::paths::data_dir;
 use crate::redroid::container_name;
 
 const SETTING_PATH: &str = "/data/local/tmp/annex-location";
@@ -96,6 +99,9 @@ pub fn get(instance: &Instance) -> Result<Location> {
 
 pub fn set(instance: &Instance, location: Location) -> Result<()> {
     let container = container(instance)?;
+    if location != Location::Host {
+        forget(&instance.name)?;
+    }
     // A position shared from this computer is only kept while the instance asks for it.
     let script = match location {
         Location::Default => format!("rm -f {SETTING_PATH} {HOST_FIX_PATH}"),
@@ -103,7 +109,27 @@ pub fn set(instance: &Instance, location: Location) -> Result<()> {
         Location::Fixed { .. } => format!("echo \"$1\" > {SETTING_PATH} && rm -f {HOST_FIX_PATH}"),
     };
     let value = location.to_string();
-    docker::run(&["exec", &container, "sh", "-c", &script, "sh", &value]).map(drop)
+    docker::run(&["exec", &container, "sh", "-c", &script, "sh", &value])?;
+    if location == Location::Host {
+        let path = consent_path(&instance.name);
+        fs::create_dir_all(path.parent().expect("consent path has a parent"))?;
+        fs::write(path, "")?;
+    }
+    Ok(())
+}
+
+/// Whether this computer agreed to share its location with the instance. The agreement is kept
+/// on the host because the instance's own setting can be changed from inside the instance.
+pub fn is_shared(name: &str) -> bool {
+    consent_path(name).exists()
+}
+
+/// Withdraws the agreement, so a later instance with the same name doesn't inherit it.
+pub fn forget(name: &str) -> Result<()> {
+    match fs::remove_file(consent_path(name)) {
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error.into()),
+        _ => Ok(()),
+    }
 }
 
 /// Hands the instance this computer's latest position. The file is readable by root only, since
@@ -112,6 +138,10 @@ pub fn share_host_fix(container: &str, fix: Fix) -> Result<()> {
     let script = format!("umask 077; echo \"$1\" > {HOST_FIX_PATH}");
     let value = format!("{},{} {:.0}", fix.latitude, fix.longitude, fix.accuracy);
     docker::run(&["exec", container, "sh", "-c", &script, "sh", &value]).map(drop)
+}
+
+fn consent_path(name: &str) -> PathBuf {
+    data_dir().join("host-location").join(name)
 }
 
 fn container(instance: &Instance) -> Result<String> {

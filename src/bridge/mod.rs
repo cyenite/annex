@@ -196,7 +196,8 @@ impl Bridge<'_> {
     }
 
     /// Shares this computer's position with running instances set to `annex location host`,
-    /// running GeoClue only while at least one is. Every check shares the position again, which
+    /// which takes both the agreement kept on this computer and the instance's own setting, and
+    /// runs GeoClue only while at least one is. Every check shares the position again, which
     /// also covers an instance that restarted and lost it.
     fn share_host_location(&mut self, instances: &[Instance]) {
         let is_due = self
@@ -209,6 +210,7 @@ impl Bridge<'_> {
                 .iter()
                 .filter(|instance| instance.state == State::Running)
                 .filter(|instance| instance.backend.mode() == Mode::Container)
+                .filter(|instance| crate::location::is_shared(&instance.name))
                 .filter(|instance| {
                     crate::location::get(instance).is_ok_and(|l| l == Location::Host)
                 })
