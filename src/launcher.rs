@@ -15,6 +15,9 @@ use crate::snapshot;
 const ICON: &str = include_str!("../assets/annex.svg");
 /// The Manager's GTK application id, which names its launcher so its window groups under it.
 pub const MANAGER_ID: &str = "dev.annex.Manager";
+/// The id the desktop bridge gives GeoClue. GNOME Shell refuses location to a client whose id
+/// has no launcher entry, and names the app from that entry when it asks for permission.
+pub const BRIDGE_ID: &str = "dev.annex.Bridge";
 
 /// The app id annex's windows for an instance carry, which ties them to its launcher in the dock.
 pub fn app_id(name: &str) -> String {
@@ -137,6 +140,35 @@ pub fn install_icon() -> Result<()> {
     fs::create_dir_all(path.parent().expect("icon path has a parent"))?;
     fs::write(path, ICON)?;
     Ok(())
+}
+
+/// Writes the bridge's hidden launcher entry; true when it was missing or out of date.
+pub fn install_bridge_entry() -> Result<bool> {
+    let executable = env::current_exe()?
+        .canonicalize()
+        .context("could not resolve annex's own path")?;
+    let entry = format!(
+        "\
+[Desktop Entry]
+Type=Application
+Name=Annex
+Comment=Shares this computer's location with Android instances that ask for it
+Icon=annex
+Exec=\"{}\" location
+NoDisplay=true
+X-Geoclue-Reason=Android instances you set to `annex location host` see this computer's location.
+",
+        executable.display()
+    );
+    let path = data_home()
+        .join("applications")
+        .join(format!("{BRIDGE_ID}.desktop"));
+    if fs::read_to_string(&path).is_ok_and(|current| current == entry) {
+        return Ok(false);
+    }
+    fs::create_dir_all(path.parent().expect("entry path has a parent"))?;
+    fs::write(path, entry)?;
+    Ok(true)
 }
 
 fn refresh_database() {

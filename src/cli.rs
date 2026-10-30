@@ -119,6 +119,17 @@ pub enum Commands {
         #[arg(value_name = "ARGS", required = true)]
         args: Vec<String>,
     },
+    /// Show or set where an instance's apps see it: a fixed position, or this computer's own
+    #[command(
+        override_usage = "annex location [NAME] [default | host | LAT,LON]",
+        after_help = "With no position, shows the current one. `host` uses this computer's location \
+through the desktop bridge; your desktop asks once whether Annex may use it."
+    )]
+    Location {
+        /// An optional instance, then `default`, `host` or a position like -1.2921,36.8219
+        #[arg(value_name = "ARGS", num_args = 0..=2, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
     /// Copy files or folders from this machine to an instance
     #[command(override_usage = "annex push [NAME] <PATH>... [--to <FOLDER>]")]
     Push {

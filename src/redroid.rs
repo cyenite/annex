@@ -9,7 +9,7 @@ use anyhow::{Context, Result, bail};
 
 use crate::adb::Adb;
 use crate::instance::{AndroidVersion, Backend, Instance, State, UpOptions, require};
-use crate::{docker, gpu};
+use crate::{docker, gpu, location};
 
 const PORTS: std::ops::Range<u16> = 5600..5700;
 const BOOT_TIMEOUT: Duration = Duration::from_secs(180);
@@ -170,6 +170,7 @@ pub fn up(adb: &Adb, name: &str, options: UpOptions) -> Result<Instance> {
         }
     };
     wait_until_booted(&instance)?;
+    start_location_feed(&instance);
     adb.connect(&instance.serial)?;
     Ok(instance)
 }
@@ -234,6 +235,7 @@ pub fn recreate(
 pub fn start_and_connect(adb: &Adb, instance: &Instance) -> Result<()> {
     docker::run(&["start", &container_name(&instance.name)])?;
     wait_until_booted(instance)?;
+    start_location_feed(instance);
     adb.connect(&instance.serial)
 }
 
@@ -419,6 +421,12 @@ fn wait_until_booted(instance: &Instance) -> Result<()> {
             );
         }
         sleep(Duration::from_millis(250));
+    }
+}
+
+fn start_location_feed(instance: &Instance) {
+    if let Err(error) = location::start_feed(&container_name(&instance.name)) {
+        println!("warning: {} has no location: {error:#}", instance.name);
     }
 }
 

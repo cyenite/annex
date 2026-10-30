@@ -4,6 +4,14 @@ All notable changes to annex are recorded here. The format follows [Keep a Chang
 
 ## Unreleased
 
+### Added
+
+- `annex location [NAME] [default | host | LAT,LON]` shows or sets where an instance's apps see it. `host` (opt-in, per instance) follows this computer's location through the desktop bridge and GeoClue, after the desktop's own permission prompt.
+
+### Fixed
+
+- Apps that use location see it as on and get a position. Container-mode instances had no GPS or network location provider, so apps such as those using Geolocator reported location services as disabled after permission was granted. Each instance now simulates both, at the Android emulator's default position until `annex location` moves it.
+
 ## 0.3.0 - 2026-10-30
 
 ### Added

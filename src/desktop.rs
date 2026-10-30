@@ -7,11 +7,22 @@ use crate::process::output_within;
 const TITLE_MAX_CHARS: usize = 120;
 const BODY_MAX_CHARS: usize = 600;
 const NOTIFY_TIMEOUT: Duration = Duration::from_secs(10);
+const GSETTINGS_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Whether annex runs inside a graphical session that can show windows, which it doesn't over
 /// SSH, in CI or from a plain TTY.
 pub fn has_session() -> bool {
     env::var_os("WAYLAND_DISPLAY").is_some() || env::var_os("DISPLAY").is_some()
+}
+
+/// Whether GNOME's Location Services switch is off, which makes GeoClue refuse every app. False
+/// on other desktops, where annex can't tell.
+pub fn is_location_off() -> bool {
+    let output = output_within(
+        Command::new("gsettings").args(["get", "org.gnome.system.location", "enabled"]),
+        GSETTINGS_TIMEOUT,
+    );
+    output.is_ok_and(|output| String::from_utf8_lossy(&output.stdout).trim() == "false")
 }
 
 /// Shows a desktop notification from annex itself, for commands run from a launcher or menu

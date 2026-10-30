@@ -119,6 +119,19 @@ annex pull /sdcard/Download/report.pdf
 
 To target a specific instance, put its name first: `annex install pixel app-debug.apk`.
 
+### Location
+
+Apps see GPS and network location. An instance starts at the Android emulator's default position; move it, or let it follow this computer:
+
+```sh
+annex location                          # where the instance is
+annex location -1.2921,36.8219          # a fixed position, kept across restarts and snapshots
+annex location host                     # this computer's location, through the desktop bridge
+annex location default                  # back to the default position
+```
+
+`host` is opt-in per instance and needs the desktop bridge and your desktop's Location Services; GNOME asks once whether Annex may use your location. A computer without GPS finds itself from nearby Wi-Fi networks, so expect tens of meters at best and a few kilometers at worst, and no position at all until it has one. The position is only shared with instances set to `host`.
+
 ## On your desktop
 
 ### Annex Manager
@@ -135,7 +148,7 @@ Every instance gets an entry in your app launcher and dock. Clicking it starts t
 
 ### Desktop bridge and panel menu
 
-The bridge keeps one clipboard across your desktop and every running instance, shows Android notifications as desktop notifications, and puts an annex menu in your panel. The menu lists every instance with its state and offers Show, Freeze or Thaw, Snapshot now, Reset to, Stop, and New instance.
+The bridge keeps one clipboard across your desktop and every running instance, shows Android notifications as desktop notifications, shares this computer's location with instances set to `annex location host`, and puts an annex menu in your panel. The menu lists every instance with its state and offers Show, Freeze or Thaw, Snapshot now, Reset to, Stop, and New instance.
 
 ```sh
 annex bridge install        # run it with your desktop session (annex setup does this)
@@ -178,7 +191,9 @@ Anyone in the `docker` group can still open a shell in an instance, as with any 
 
 ## Limits
 
-- **No Google Play.** Apps that need Play Integrity (banking, some games) will not run. Use a real device or an emulator for those.
+- **No Google Play.** Apps that need Play Integrity (banking, some games) will not run. Use a real device or an emulator for those. Firebase Cloud Messaging can't register either, so push notifications from a server never arrive; notifications an app posts itself still show.
+- **Location is simulated.** Positions come from annex, not a GPS receiver (see [Location](#location)), and are marked as mock locations, which apps can detect.
+- **No Bluetooth.** Instances can't reach this computer's Bluetooth adapter yet.
 - **No Android 16 yet.** Its system services need a kernel feature (ashmem) that mainline kernels no longer have.
 - **x86_64 Linux only** for now.
 
@@ -191,6 +206,7 @@ Anyone in the `docker` group can still open a shell in an instance, as with any 
 | Android Studio loses its devices | Two adb versions on one machine kill each other's server. Point Studio and your PATH at the SDK's adb. |
 | A Flutter debug build crashes on launch | The APK was built for a phone (arm64). Let `flutter run` build for the instance, which is x86_64. |
 | Window mode won't freeze, saying its state is out of sync | Run `annex setup --repair`. |
+| An app says location is off although it's on in Settings | Run `annex up` for that instance. An instance that was already running when you updated annex gets GPS and network location on its next `annex up`. |
 | No annex menu in the panel | On GNOME, enable the AppIndicator extension; `annex doctor` checks for it. |
 | Dozens of small drives fill the dock while an instance runs | Run `annex setup`. Android mounts each of its system modules as a disk image, and setup tells your desktop to ignore them. |
 
