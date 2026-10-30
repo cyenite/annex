@@ -3,6 +3,7 @@
 
 #include <aidl/android/hardware/gnss/BnGnss.h>
 #include <aidl/android/hardware/gnss/IGnssCallback.h>
+#include <android/binder_ibinder.h>
 #include <android/binder_manager.h>
 #include <android/binder_process.h>
 #include <android/log.h>
@@ -15,6 +16,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <sys/types.h>
 #include <thread>
 #include <time.h>
 
@@ -41,6 +43,8 @@ using ndk::ScopedAStatus;
 namespace {
 
 constexpr const char* kTag = "annex-gnss";
+constexpr uid_t kRootUid = 0;
+constexpr uid_t kSystemUid = 1000;
 constexpr const char* kSettingPath = "/data/local/tmp/annex-location";
 constexpr const char* kHostFixPath = "/dev/annex-host-location";
 constexpr double kDefaultLatitude = 37.4220;
@@ -103,6 +107,22 @@ GnssLocation toLocation(const Fix& fix) {
 
 // Android 15's framework calls into an extension it was handed as null, so every optional
 // extension is refused with an error instead.
+// Only system_server and root may drive the HAL. SELinux is off in Redroid, so servicemanager
+// hands this binder to any process that asks, and a caller that replaced the callback would
+// receive the position (this computer's own, with `host`) without a location permission.
+bool isSystemCaller() {
+    const uid_t uid = AIBinder_getCallingUid();
+    return uid == kSystemUid || uid == kRootUid;
+}
+
+ScopedAStatus denied() {
+    return ScopedAStatus::fromExceptionCode(EX_SECURITY);
+}
+
+ScopedAStatus okForSystem() {
+    return isSystemCaller() ? ScopedAStatus::ok() : denied();
+}
+
 ScopedAStatus unsupported() {
     return ScopedAStatus::fromExceptionCode(EX_UNSUPPORTED_OPERATION);
 }
@@ -112,6 +132,7 @@ class Gnss : public BnGnss {
     ~Gnss() override { stopSession(); }
 
     ScopedAStatus setCallback(const std::shared_ptr<IGnssCallback>& callback) override {
+        if (!isSystemCaller()) return denied();
         {
             std::lock_guard<std::mutex> guard(mLock);
             mCallback = callback;
@@ -125,6 +146,7 @@ class Gnss : public BnGnss {
     }
 
     ScopedAStatus close() override {
+        if (!isSystemCaller()) return denied();
         stopSession();
         std::lock_guard<std::mutex> guard(mLock);
         mCallback = nullptr;
@@ -132,6 +154,7 @@ class Gnss : public BnGnss {
     }
 
     ScopedAStatus start() override {
+        if (!isSystemCaller()) return denied();
         if (mIsRunning.exchange(true)) return ScopedAStatus::ok();
         if (mThread.joinable()) mThread.join();
         report([](auto& callback) {
@@ -142,6 +165,7 @@ class Gnss : public BnGnss {
     }
 
     ScopedAStatus stop() override {
+        if (!isSystemCaller()) return denied();
         stopSession();
         report([](auto& callback) {
             callback->gnssStatusCb(IGnssCallback::GnssStatusValue::SESSION_END);
@@ -150,18 +174,19 @@ class Gnss : public BnGnss {
     }
 
     ScopedAStatus setPositionMode(const PositionModeOptions& options) override {
+        if (!isSystemCaller()) return denied();
         mIntervalMs = std::max(1000, options.minIntervalMs);
         return ScopedAStatus::ok();
     }
 
-    ScopedAStatus injectTime(int64_t, int64_t, int32_t) override { return ScopedAStatus::ok(); }
-    ScopedAStatus injectLocation(const GnssLocation&) override { return ScopedAStatus::ok(); }
-    ScopedAStatus injectBestLocation(const GnssLocation&) override { return ScopedAStatus::ok(); }
-    ScopedAStatus deleteAidingData(GnssAidingData) override { return ScopedAStatus::ok(); }
-    ScopedAStatus startSvStatus() override { return ScopedAStatus::ok(); }
-    ScopedAStatus stopSvStatus() override { return ScopedAStatus::ok(); }
-    ScopedAStatus startNmea() override { return ScopedAStatus::ok(); }
-    ScopedAStatus stopNmea() override { return ScopedAStatus::ok(); }
+    ScopedAStatus injectTime(int64_t, int64_t, int32_t) override { return okForSystem(); }
+    ScopedAStatus injectLocation(const GnssLocation&) override { return okForSystem(); }
+    ScopedAStatus injectBestLocation(const GnssLocation&) override { return okForSystem(); }
+    ScopedAStatus deleteAidingData(GnssAidingData) override { return okForSystem(); }
+    ScopedAStatus startSvStatus() override { return okForSystem(); }
+    ScopedAStatus stopSvStatus() override { return okForSystem(); }
+    ScopedAStatus startNmea() override { return okForSystem(); }
+    ScopedAStatus stopNmea() override { return okForSystem(); }
 
     ScopedAStatus getExtensionPsds(std::shared_ptr<IGnssPsds>*) override {
         return unsupported();
