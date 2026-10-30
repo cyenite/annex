@@ -4,6 +4,20 @@ All notable changes to annex are recorded here. The format follows [Keep a Chang
 
 ## Unreleased
 
+### Added
+
+- `annex location` takes coordinates copied from Google Maps (`-1.2921, 36.8219`) and Google Maps links, including short share links; a place link uses the place's pin.
+- `annex location` shows how close the computer's own position is for an instance set to `host`, and says when it was only guessed from the IP address.
+
+### Fixed
+
+- Apps no longer see an instance's position as a mock location. Instances now have a GPS of their own (a small GNSS driver annex mounts into Android), so positions arrive through Android's real GPS service, and apps that refuse mock locations, as many fraud checks do, accept them. `annex location` works as before.
+
+### Changed
+
+- Container-mode instances rebuild on their next `annex up` to add the GPS driver; their data is kept.
+- Instances no longer have a network location provider, only GPS.
+
 ## 0.4.0 - 2026-10-30
 
 ### Added

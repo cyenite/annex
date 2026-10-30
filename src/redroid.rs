@@ -14,7 +14,7 @@ use crate::{docker, gpu, location};
 const PORTS: std::ops::Range<u16> = 5600..5700;
 const BOOT_TIMEOUT: Duration = Duration::from_secs(180);
 const PULL_ATTEMPTS: u32 = 3;
-const CONTAINER_CONFIG: &str = "4";
+const CONTAINER_CONFIG: &str = "5";
 const ADB_KEYS_PATH: &str = "/product/etc/security/adb_keys";
 // adbd also trusts keys saved on the data volume ("always allow" and wireless pairings). Masking
 // both with a read-only /dev/null means only the mounted user key is ever trusted, including on
@@ -170,7 +170,6 @@ pub fn up(adb: &Adb, name: &str, options: UpOptions) -> Result<Instance> {
         }
     };
     wait_until_booted(&instance)?;
-    start_location_feed(&instance);
     adb.connect(&instance.serial)?;
     Ok(instance)
 }
@@ -235,7 +234,6 @@ pub fn recreate(
 pub fn start_and_connect(adb: &Adb, instance: &Instance) -> Result<()> {
     docker::run(&["start", &container_name(&instance.name)])?;
     wait_until_booted(instance)?;
-    start_location_feed(instance);
     adb.connect(&instance.serial)
 }
 
@@ -313,9 +311,10 @@ fn create(adb: &Adb, name: &str, container: &Container) -> Result<()> {
     let bluetooth_mask = mask(BLUETOOTH_SIM_INIT);
     let saved_keys_mask = mask(SAVED_ADB_KEYS);
     let wireless_keys_mask = mask(SAVED_WIRELESS_KEYS);
+    let gnss_mounts = location::gnss_mounts().context("could not write the GPS driver's files")?;
     // Redroid cannot boot without --privileged (its init needs writable sysfs and cgroups), so the
     // container is root-equivalent: adbd must only accept the user's key, and nothing else may listen.
-    docker::run(&[
+    let mut args = vec![
         "create",
         "--privileged",
         "--name",
@@ -344,6 +343,11 @@ fn create(adb: &Adb, name: &str, container: &Container) -> Result<()> {
         &wireless_keys_mask,
         "--publish",
         &port_binding,
+    ];
+    for gnss_mount in &gnss_mounts {
+        args.extend(["--mount", gnss_mount]);
+    }
+    args.extend([
         android.image(),
         "androidboot.use_memfd=true",
         "ro.adb.secure=1",
@@ -354,8 +358,8 @@ fn create(adb: &Adb, name: &str, container: &Container) -> Result<()> {
         &width,
         &height,
         &dpi,
-    ])
-    .map(drop)
+    ]);
+    docker::run(&args).map(drop)
 }
 
 fn ensure_image(android: AndroidVersion) -> Result<()> {
@@ -424,12 +428,6 @@ fn wait_until_booted(instance: &Instance) -> Result<()> {
     }
 }
 
-fn start_location_feed(instance: &Instance) {
-    if let Err(error) = location::start_feed(&container_name(&instance.name)) {
-        println!("warning: {} has no location: {error:#}", instance.name);
-    }
-}
-
 /// "Annex_Default_15" for the instance `default` on Android 15.
 fn model_name(name: &str, android: AndroidVersion) -> String {
     let words: Vec<String> = name
@@ -467,7 +465,7 @@ mod tests {
 
     #[test]
     fn parses_a_current_container() {
-        let instance = parse("running\tpixel\t15\t5600\t4\t720x1280/320").unwrap();
+        let instance = parse("running\tpixel\t15\t5600\t5\t720x1280/320").unwrap();
         assert_eq!(instance.name, "pixel");
         assert_eq!(instance.serial, "127.0.0.1:5600");
         assert_eq!(instance.state, State::Running);
