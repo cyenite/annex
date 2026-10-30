@@ -13,6 +13,7 @@ mod redroid;
 mod scrcpy;
 mod setup;
 mod snapshot;
+mod update;
 mod waydroid;
 mod window;
 
@@ -90,6 +91,33 @@ fn run(command: Commands) -> Result<ExitCode> {
                 window_mode,
             },
         })?,
+        Commands::Update { check } => match update::run(check)? {
+            update::Outcome::UpToDate(version) => {
+                report(format!("annex {version} is the latest version"));
+            }
+            update::Outcome::NoRelease(version) => report(format!(
+                "annex {version}: no release is published yet; `annex update` builds the latest source"
+            )),
+            update::Outcome::Available { current, latest } => report(format!(
+                "annex {latest} is available (you have {current}): run `annex update`"
+            )),
+            update::Outcome::Updated { from, to } => {
+                report(format!("updated annex from {from} to {to}"));
+            }
+            update::Outcome::BuiltFromSource { path } => {
+                report(format!("installed the latest annex at {}", path.display()));
+                let running = std::env::current_exe()?.canonicalize()?;
+                if path.canonicalize().ok() != Some(running.clone()) {
+                    println!(
+                        "note: this copy of annex is {}; use the new one, or put {} first on your PATH",
+                        running.display(),
+                        path.parent()
+                            .map(|p| p.display().to_string())
+                            .unwrap_or_default()
+                    );
+                }
+            }
+        },
         Commands::About { licenses } => {
             if licenses {
                 print!("{}", include_str!("../THIRD_PARTY_NOTICES.md"));

@@ -26,6 +26,10 @@ pub fn install() -> Result<PathBuf> {
     Ok(path)
 }
 
+pub fn restart() -> Result<()> {
+    systemctl(&["restart", UNIT])
+}
+
 pub fn uninstall() -> Result<()> {
     let path = unit_path();
     if path.exists() {

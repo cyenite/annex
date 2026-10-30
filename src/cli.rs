@@ -148,6 +148,12 @@ pub enum Commands {
     /// Share the clipboard and notifications between instances and the desktop
     #[command(subcommand)]
     Bridge(BridgeCommand),
+    /// Update annex to the latest release
+    Update {
+        /// Only check whether a newer release exists
+        #[arg(long)]
+        check: bool,
+    },
     /// Show the version, project links and third-party licenses
     About {
         /// Print the notices for the software annex uses
