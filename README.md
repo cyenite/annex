@@ -35,8 +35,10 @@ To update later, run `annex update`. It installs the latest release after checki
 - let your user run containers without sudo;
 - keep the disk images Android mounts inside each instance from showing up as drives in your dock and file manager;
 - download the Android 15 image, with live speed and time left;
-- with `--bridge`, run the desktop bridge with your session;
+- on a desktop, run the desktop bridge with your session (clipboard, notifications, panel menu) and install Annex Manager, the window app;
 - with `--window-mode`, set up window mode.
+
+On a desktop, `annex setup` is the only step: everything below is in place when it finishes. `--no-bridge` and `--no-manager` leave those out, and over SSH they're skipped anyway.
 
 <img src="docs/images/setup.png" alt="annex setup listing what is already set up, the one step that needs sudo and the step that doesn't" width="100%">
 
@@ -119,6 +121,14 @@ To target a specific instance, put its name first: `annex install pixel app-debu
 
 ## On your desktop
 
+### Annex Manager
+
+Annex Manager is a window app for everything above: every instance as a card with its state and actions, a page per instance with its details, screen size and snapshots (save, restore, delete), a New instance dialog, and settings for the bridge and for opening Annex when you log in. Drop an APK on a running instance's card to install it.
+
+<img src="docs/images/manager.png" alt="Annex Manager listing two running instances, each with Show, Freeze and Stop buttons" width="100%">
+
+Open it from your app launcher ("Annex"), from the panel menu, or with `annex manager`. `annex setup` installs it on a desktop, and `annex update` keeps it current. It needs GTK 4 and libadwaita 1.5 or newer, which GNOME 46 and later include (Ubuntu 24.04 and newer).
+
 ### App launcher
 
 Every instance gets an entry in your app launcher and dock. Clicking it starts the instance if needed and opens its screen; right-click for Freeze, Thaw, Stop and Reset to any snapshot. `annex up` adds the entry and `annex rm` removes it; `annex launcher install` and `annex launcher remove` do it by hand. Launchers report problems as desktop notifications.
@@ -128,7 +138,7 @@ Every instance gets an entry in your app launcher and dock. Clicking it starts t
 The bridge keeps one clipboard across your desktop and every running instance, shows Android notifications as desktop notifications, and puts an annex menu in your panel. The menu lists every instance with its state and offers Show, Freeze or Thaw, Snapshot now, Reset to, Stop, and New instance.
 
 ```sh
-annex bridge install        # run it with your desktop session (or: annex setup --bridge)
+annex bridge install        # run it with your desktop session (annex setup does this)
 annex bridge status
 annex bridge run --verbose  # or run it in the foreground
 ```

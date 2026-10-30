@@ -57,7 +57,7 @@ Open, freeze and reset instances from the desktop. Each piece reuses the one bef
 
 - [x] App launcher entries: one per instance in the app grid and dock, with Freeze, Thaw, Stop and Reset to snapshot actions, reporting through notifications
 - [x] Panel menu in the desktop bridge: every instance with its state, Show, Freeze or Thaw, Snapshot now, Reset to, Stop, and New instance
-- [ ] Annex Manager: a GTK 4 / libadwaita window app with instance cards, a detail page with snapshots and display settings, a New instance dialog, drag-and-drop APK install, and bridge settings. The core moves into an `annex-core` library crate in a cargo workspace, shared by the CLI and a second binary, `annex-manager`, built behind its own package so the CLI never needs GTK
+- [x] Annex Manager: a GTK 4 / libadwaita window app with instance cards, a detail page with snapshots and display settings, a New instance dialog, drag-and-drop APK install, and bridge settings. The core is a library target (`annex_core`) shared by the CLI and a second binary, `annex-manager`, built behind a `manager` feature so the CLI never needs GTK; `annex setup` installs it from the release
 
 ## Next
 

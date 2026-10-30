@@ -1,6 +1,6 @@
 [package]
 name = "annex"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.88"
 license = "Apache-2.0"
@@ -12,6 +12,24 @@ keywords = ["android", "emulator", "adb", "flutter", "developer-tools"]
 categories = ["command-line-utilities", "development-tools", "emulators"]
 exclude = ["phase0/"]
 
+[lib]
+name = "annex_core"
+path = "src/lib.rs"
+
+[[bin]]
+name = "annex"
+path = "src/main.rs"
+
+# The window app links GTK, so it builds only with `--features manager`: plain `cargo install`
+# and every CLI build stay free of GTK's development packages.
+[[bin]]
+name = "annex-manager"
+path = "src/manager/main.rs"
+required-features = ["manager"]
+
+[features]
+manager = ["dep:gtk", "dep:adw"]
+
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
@@ -21,6 +39,8 @@ indicatif = "0.18"
 ksni = { version = "0.3", default-features = false, features = ["blocking", "async-io"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+gtk = { package = "gtk4", version = "0.11", features = ["v4_14"], optional = true }
+adw = { package = "libadwaita", version = "0.9", features = ["v1_5"], optional = true }
 x11rb = { version = "0.14", features = ["xfixes"] }
 
 [profile.release]

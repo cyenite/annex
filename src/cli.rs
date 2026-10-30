@@ -1,8 +1,8 @@
 use clap::{Parser, Subcommand};
 use clap_complete::Shell;
 
-use crate::instance::{AndroidVersion, Mode};
-use crate::redroid::Display;
+use annex_core::instance::{AndroidVersion, Mode};
+use annex_core::redroid::Display;
 
 #[derive(Parser)]
 #[command(
@@ -34,9 +34,17 @@ pub enum Commands {
         /// Show the plan and change nothing
         #[arg(long)]
         dry_run: bool,
-        /// Also run the desktop bridge with your session (clipboard, notifications)
-        #[arg(long)]
+        /// Kept for scripts written for 0.2.0: the bridge is now set up by default
+        #[arg(long, hide = true)]
         bridge: bool,
+        /// Don't run the desktop bridge with your session (clipboard, notifications, panel menu);
+        /// it is skipped anyway outside a desktop session
+        #[arg(long, conflicts_with = "bridge")]
+        no_bridge: bool,
+        /// Don't install Annex Manager, the window app; it is skipped anyway outside a desktop
+        /// session
+        #[arg(long)]
+        no_manager: bool,
         /// Also set up window mode (apps in native desktop windows)
         #[arg(long)]
         window_mode: bool,
@@ -89,6 +97,8 @@ pub enum Commands {
         /// The instance [default: `default`, or the only running instance]
         name: Option<String>,
     },
+    /// Open Annex Manager, the window app for your instances
+    Manager,
     /// Add or remove an instance's entry in your desktop's app launcher
     #[command(subcommand)]
     Launcher(LauncherCommand),

@@ -38,7 +38,7 @@ jobs:
           version="${GITHUB_REF_NAME#v}"
           archive="annex-${version}-x86_64-linux"
           mkdir "$archive"
-          cp target/release/annex README.md LICENSE CHANGELOG.md "$archive/"
+          cp target/release/annex README.md LICENSE CHANGELOG.md THIRD_PARTY_NOTICES.md "$archive/"
           tar czf "$archive.tar.gz" "$archive"
           sha256sum "$archive.tar.gz" > "$archive.tar.gz.sha256"
           # The changelog section for this version becomes the release notes.
@@ -54,3 +54,29 @@ jobs:
             --title "annex $GITHUB_REF_NAME" \
             --notes-file notes.md \
             annex-*.tar.gz annex-*.tar.gz.sha256
+
+  manager:
+    name: Build and publish Annex Manager
+    needs: release
+    permissions:
+      contents: write
+    # libadwaita 1.5, which the Manager targets, first ships with Ubuntu 24.04, so this binary
+    # needs a newer system than the CLI's.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - run: sudo apt-get update && sudo apt-get install -y libgtk-4-dev libadwaita-1-dev
+      - run: cargo build --release --locked --features manager --bin annex-manager
+      - name: Package
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          archive="annex-manager-${version}-x86_64-linux"
+          mkdir "$archive"
+          cp target/release/annex-manager LICENSE THIRD_PARTY_NOTICES.md "$archive/"
+          tar czf "$archive.tar.gz" "$archive"
+          sha256sum "$archive.tar.gz" > "$archive.tar.gz.sha256"
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" annex-manager-*.tar.gz annex-manager-*.tar.gz.sha256

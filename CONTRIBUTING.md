@@ -19,14 +19,27 @@ cargo build
 cargo test
 ```
 
-You need Rust 1.88 or newer. To try your build against real instances you also need what `annex doctor` checks: binder, Docker, the Android SDK platform-tools, and scrcpy for windows and the bridge.
+You need Rust 1.88 or newer. To build Annex Manager as well, install GTK 4 and libadwaita's development packages (`libgtk-4-dev libadwaita-1-dev` on Debian and Ubuntu, `gtk4-devel libadwaita-devel` on Fedora) and add `--features manager`:
+
+```sh
+cargo run --features manager --bin annex-manager
+```
+
+To click through the Manager without a desktop, for example from a remote session, run it on GTK's Broadway backend and open http://127.0.0.1:8085 in a browser:
+
+```sh
+gtk4-broadwayd :5 &
+GDK_BACKEND=broadway BROADWAY_DISPLAY=:5 cargo run --features manager --bin annex-manager
+``` To try your build against real instances you also need what `annex doctor` checks: binder, Docker, the Android SDK platform-tools, and scrcpy for windows and the bridge.
 
 ## Project layout
 
 | Path | What it owns |
 |---|---|
-| `src/main.rs` | Entry point: dispatches each command and prints its result |
+| `src/lib.rs` | The `annex_core` library: every module below, shared by both binaries |
+| `src/main.rs` | The `annex` CLI: dispatches each command and prints its result |
 | `src/cli.rs` | The command-line interface (clap) |
+| `src/manager/` | Annex Manager (`--features manager`): window, instance cards, detail page, dialogs; work runs off the UI thread through `task::spawn` |
 | `src/instance.rs` | The instance model: modes, states, Android versions, names, the default instance, dispatch to backends |
 | `src/redroid.rs` | Redroid instances as Docker containers: create, rebuild, boot, display settings |
 | `src/waydroid.rs` | Window mode, on Waydroid: start, freeze over D-Bus, state from its cgroup, app windows, the registered name |
@@ -52,6 +65,8 @@ cargo fmt --all --check
 cargo clippy --all-targets -- -D warnings
 cargo test
 ```
+
+If you touched `src/manager/` or anything it uses, also run `cargo clippy --all-targets --features manager -- -D warnings`.
 
 Then try the change against a real instance. Unit tests cover parsing and protocol code; they can't cover Docker, adb or a desktop session. Describe what you ran in the pull request. For changes that touch these areas, check:
 

@@ -9,6 +9,7 @@ use ksni::menu::{StandardItem, SubMenu};
 use ksni::{Category, MenuItem, ToolTip};
 
 use crate::instance::{Instance, Mode, State, validate_name};
+use crate::launcher;
 use crate::paths::which;
 use crate::snapshot;
 
@@ -82,13 +83,12 @@ impl ksni::Tray for Tray {
             menu.push(MenuItem::Separator);
         }
         menu.push(item("New instance...", true, |_| new_instance()));
-        menu.push(item(
-            "Open Annex Manager",
-            which("annex-manager").is_some(),
-            |_| {
-                spawn_program("annex-manager", &[]);
-            },
-        ));
+        let manager = launcher::manager_path();
+        menu.push(item("Open Annex Manager", manager.is_some(), move |_| {
+            if let Some(manager) = &manager {
+                spawn_program(&manager.to_string_lossy(), &[]);
+            }
+        }));
         menu.push(MenuItem::Separator);
         menu.push(item("Quit the bridge", true, |_| std::process::exit(0)));
         menu
