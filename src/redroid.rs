@@ -9,12 +9,13 @@ use anyhow::{Context, Result, bail};
 
 use crate::adb::Adb;
 use crate::instance::{AndroidVersion, Backend, Instance, State, UpOptions, require};
+use crate::paths::{data_dir, write_if_changed};
 use crate::{docker, gpu, location};
 
 const PORTS: std::ops::Range<u16> = 5600..5700;
 const BOOT_TIMEOUT: Duration = Duration::from_secs(180);
 const PULL_ATTEMPTS: u32 = 3;
-const CONTAINER_CONFIG: &str = "5";
+const CONTAINER_CONFIG: &str = "6";
 const ADB_KEYS_PATH: &str = "/product/etc/security/adb_keys";
 // adbd also trusts keys saved on the data volume ("always allow" and wireless pairings). Masking
 // both with a read-only /dev/null means only the mounted user key is ever trusted, including on
@@ -24,6 +25,12 @@ const SAVED_WIRELESS_KEYS: &str = "/data/misc/adb/adb_temp_keys.xml";
 // The simulated Bluetooth HAL listens on TCP 6111/6211/6311 on every interface, reachable by any
 // local user through the Docker bridge; masking its init script keeps it from starting.
 const BLUETOOTH_SIM_INIT: &str = "/vendor/etc/init/android.hardware.bluetooth@1.1-service.sim.rc";
+// Redroid has no camera, yet its handheld feature list declares one, so apps that trust the
+// feature fail on an empty camera list. The built-in Camera app crashes on it too, and apps hand
+// photo requests to it; hiding it lets them see there is nothing to take a photo with.
+const NO_CAMERA: &str = include_str!("../android/permissions/annex-no-camera.xml");
+const NO_CAMERA_PATH: &str = "/vendor/etc/permissions/annex-no-camera.xml";
+const CAMERA_APP: &str = "/system/product/app/Camera2";
 
 /// Screen size and density, written like scrcpy's `--new-display`: `1080x2400/420`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -311,6 +318,8 @@ fn create(adb: &Adb, name: &str, container: &Container) -> Result<()> {
     let bluetooth_mask = mask(BLUETOOTH_SIM_INIT);
     let saved_keys_mask = mask(SAVED_ADB_KEYS);
     let wireless_keys_mask = mask(SAVED_WIRELESS_KEYS);
+    let camera_app_mask = format!("type=tmpfs,dst={CAMERA_APP},readonly");
+    let no_camera_mount = no_camera_mount().context("could not write the camera settings")?;
     let gnss_mounts = location::gnss_mounts().context("could not write the GPS driver's files")?;
     // Redroid cannot boot without --privileged (its init needs writable sysfs and cgroups), so the
     // container is root-equivalent: adbd must only accept the user's key, and nothing else may listen.
@@ -341,6 +350,10 @@ fn create(adb: &Adb, name: &str, container: &Container) -> Result<()> {
         &saved_keys_mask,
         "--mount",
         &wireless_keys_mask,
+        "--mount",
+        &camera_app_mask,
+        "--mount",
+        &no_camera_mount,
         "--publish",
         &port_binding,
     ];
@@ -448,6 +461,18 @@ fn mask(path: &str) -> String {
     format!("type=bind,src=/dev/null,dst={path},readonly")
 }
 
+fn no_camera_mount() -> Result<String> {
+    let path = data_dir()
+        .join("permissions")
+        .join(env!("CARGO_PKG_VERSION"))
+        .join("annex-no-camera.xml");
+    write_if_changed(&path, NO_CAMERA.as_bytes(), 0o644)?;
+    Ok(format!(
+        "type=bind,src={},dst={NO_CAMERA_PATH},readonly",
+        path.display()
+    ))
+}
+
 fn volume_name(name: &str) -> String {
     format!("annex-{name}-data")
 }
@@ -465,7 +490,7 @@ mod tests {
 
     #[test]
     fn parses_a_current_container() {
-        let instance = parse("running\tpixel\t15\t5600\t5\t720x1280/320").unwrap();
+        let instance = parse("running\tpixel\t15\t5600\t6\t720x1280/320").unwrap();
         assert_eq!(instance.name, "pixel");
         assert_eq!(instance.serial, "127.0.0.1:5600");
         assert_eq!(instance.state, State::Running);

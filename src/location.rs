@@ -5,9 +5,8 @@
 //! which apps with fraud checks refuse.
 
 use std::fmt;
-use std::fs::{self, Permissions};
-use std::os::unix::fs::PermissionsExt;
-use std::path::{Path, PathBuf};
+use std::fs;
+use std::path::PathBuf;
 use std::process::Command;
 use std::str::FromStr;
 use std::time::Duration;
@@ -16,7 +15,7 @@ use anyhow::{Context, Result, bail};
 
 use crate::docker;
 use crate::instance::{Backend, Instance};
-use crate::paths::data_dir;
+use crate::paths::{data_dir, write_if_changed};
 use crate::process::stdout_within;
 use crate::redroid::container_name;
 
@@ -310,22 +309,6 @@ fn percent_decode(text: &str) -> String {
         }
     }
     String::from_utf8_lossy(&decoded).into_owned()
-}
-
-/// A running instance keeps the binary busy, so a changed file is replaced by renaming a new one
-/// over it, never rewritten in place.
-fn write_if_changed(path: &Path, content: &[u8], mode: u32) -> Result<()> {
-    if fs::read(path).is_ok_and(|current| current == content) {
-        return Ok(());
-    }
-    let folder = path.parent().expect("GNSS file has a parent");
-    fs::create_dir_all(folder)?;
-    let name = path.file_name().expect("GNSS file has a name");
-    let staged = folder.join(format!(".{}.new", name.to_string_lossy()));
-    fs::write(&staged, content)?;
-    fs::set_permissions(&staged, Permissions::from_mode(mode))?;
-    fs::rename(&staged, path)?;
-    Ok(())
 }
 
 fn consent_path(name: &str) -> PathBuf {
