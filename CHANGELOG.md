@@ -4,6 +4,8 @@ All notable changes to annex are recorded here. The format follows [Keep a Chang
 
 ## Unreleased
 
+## 0.5.0 - 2026-10-30
+
 ### Added
 
 - `annex location` takes coordinates copied from Google Maps (`-1.2921, 36.8219`) and Google Maps links, including short share links; a place link uses the place's pin.
