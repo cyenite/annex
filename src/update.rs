@@ -16,7 +16,7 @@ use crate::bridge;
 use crate::paths::{data_dir, which};
 use crate::process::{output_within, stdout_within};
 
-const LATEST_RELEASE: &str = "https://api.github.com/repos/cyenite/annex/releases/latest";
+const RELEASES: &str = "https://api.github.com/repos/cyenite/annex/releases";
 const SOURCE: &str = "https://github.com/cyenite/annex";
 const API_TIMEOUT: Duration = Duration::from_secs(30);
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(10 * 60);
@@ -42,6 +42,26 @@ pub enum Outcome {
     BuiltFromSource { path: PathBuf },
 }
 
+/// The programs a release ships, each in its own archive.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Program {
+    Cli,
+    Manager,
+}
+
+impl Program {
+    fn file_name(self) -> &'static str {
+        match self {
+            Self::Cli => "annex",
+            Self::Manager => "annex-manager",
+        }
+    }
+
+    fn archive_name(self, version: &str) -> String {
+        format!("{}-{version}-x86_64-linux.tar.gz", self.file_name())
+    }
+}
+
 pub fn run(is_check: bool) -> Result<Outcome> {
     let current = env!("CARGO_PKG_VERSION").to_string();
     let Some(release) = latest_release()? else {
@@ -62,7 +82,17 @@ pub fn run(is_check: bool) -> Result<Outcome> {
     let current_exe = env::current_exe()?
         .canonicalize()
         .context("could not resolve annex's own path")?;
-    install_release(&release, &latest, &current_exe)?;
+    install_release(&release, &latest, Program::Cli, &current_exe)?;
+    // The Manager comes along when it's installed already, or when this is a desktop that
+    // could use it; a release without one leaves things as they are.
+    let manager = current_exe.with_file_name(Program::Manager.file_name());
+    if manager.is_file() || crate::desktop::has_session() {
+        if let Err(error) = install_release(&release, &latest, Program::Manager, &manager) {
+            eprintln!("warning: annex updated, but Annex Manager didn't: {error:#}");
+        } else if let Err(error) = crate::launcher::install_manager_entry() {
+            eprintln!("warning: could not add Annex Manager to the app launcher: {error:#}");
+        }
+    }
     restart_bridge();
     Ok(Outcome::Updated {
         from: current,
@@ -72,6 +102,40 @@ pub fn run(is_check: bool) -> Result<Outcome> {
 
 /// The latest published release, or None while the repository has none.
 fn latest_release() -> Result<Option<Release>> {
+    fetch_release(&format!("{RELEASES}/latest"))
+}
+
+/// Installs Annex Manager from the release matching this annex's version, next to this annex.
+/// Returns false when that release has no Manager (or there is no such release).
+pub fn install_manager() -> Result<bool> {
+    let version = env!("CARGO_PKG_VERSION");
+    let Some(release) = fetch_release(&format!("{RELEASES}/tags/v{version}"))? else {
+        return Ok(false);
+    };
+    let archive = Program::Manager.archive_name(version);
+    if !release.assets.iter().any(|asset| asset.name == archive) {
+        return Ok(false);
+    }
+    let target = env::current_exe()?
+        .canonicalize()
+        .context("could not resolve annex's own path")?
+        .with_file_name(Program::Manager.file_name());
+    install_release(&release, version, Program::Manager, &target)?;
+    Ok(true)
+}
+
+/// Whether the release matching this version ships the Manager. Network or API trouble counts
+/// as no, so setup simply skips the step.
+pub fn is_manager_published() -> bool {
+    let version = env!("CARGO_PKG_VERSION");
+    let archive = Program::Manager.archive_name(version);
+    fetch_release(&format!("{RELEASES}/tags/v{version}"))
+        .ok()
+        .flatten()
+        .is_some_and(|release| release.assets.iter().any(|asset| asset.name == archive))
+}
+
+fn fetch_release(url: &str) -> Result<Option<Release>> {
     let output = output_within(
         Command::new("curl").args([
             "--silent",
@@ -81,7 +145,7 @@ fn latest_release() -> Result<Option<Release>> {
             "Accept: application/vnd.github+json",
             "--write-out",
             "\n%{http_code}",
-            LATEST_RELEASE,
+            url,
         ]),
         API_TIMEOUT,
     )
@@ -100,14 +164,19 @@ fn latest_release() -> Result<Option<Release>> {
     }
 }
 
-/// Downloads, verifies and unpacks `release`, then puts its binary at `target`.
-fn install_release(release: &Release, version: &str, target: &Path) -> Result<()> {
+/// Downloads, verifies and unpacks `program` from `release`, then puts it at `target`.
+fn install_release(
+    release: &Release,
+    version: &str,
+    program: Program,
+    target: &Path,
+) -> Result<()> {
     if env::consts::ARCH != "x86_64" {
         bail!(
             "releases only ship an x86_64 binary; build from source with `cargo install --git {SOURCE} --locked --force`"
         );
     }
-    let archive_name = archive_name(version);
+    let archive_name = program.archive_name(version);
     let asset = |name: &str| {
         release
             .assets
@@ -126,7 +195,7 @@ fn install_release(release: &Release, version: &str, target: &Path) -> Result<()
     fs::create_dir_all(&directory)?;
     let archive_path = directory.join(&archive.name);
     let checksum_path = directory.join(&checksum.name);
-    println!("downloading annex {version}");
+    println!("downloading {} {version}", program.file_name());
     download(&archive.browser_download_url, &archive_path)?;
     download(&checksum.browser_download_url, &checksum_path)?;
     let expected = parse_checksum(&fs::read_to_string(&checksum_path)?)
@@ -145,15 +214,15 @@ fn install_release(release: &Release, version: &str, target: &Path) -> Result<()
     )?;
     let binary = directory
         .join(archive_name.trim_end_matches(".tar.gz"))
-        .join("annex");
-    let replaced = replace(&binary, target);
+        .join(program.file_name());
+    let replaced = replace(&binary, target, program);
     let _ = fs::remove_dir_all(&directory);
     replaced
 }
 
 /// Swaps `target` for `new` with a rename in the same folder, which is atomic and safe while a
 /// process still runs the old file.
-fn replace(new: &Path, target: &Path) -> Result<()> {
+fn replace(new: &Path, target: &Path, program: Program) -> Result<()> {
     let staged = target.with_file_name(".annex-staged");
     let copied = fs::copy(new, &staged)
         .and_then(|_| fs::set_permissions(&staged, Permissions::from_mode(0o755)))
@@ -166,8 +235,11 @@ fn replace(new: &Path, target: &Path) -> Result<()> {
             target.display()
         );
     }
-    stdout_within(Command::new(target).arg("--version"), API_TIMEOUT)
-        .context("the new annex binary doesn't run")?;
+    // The Manager would open its window rather than print a version, so only the CLI is run.
+    if program == Program::Cli {
+        stdout_within(Command::new(target).arg("--version"), API_TIMEOUT)
+            .context("the new annex binary doesn't run")?;
+    }
     Ok(())
 }
 
@@ -230,10 +302,6 @@ fn restart_bridge() {
     }
 }
 
-fn archive_name(version: &str) -> String {
-    format!("annex-{version}-x86_64-linux.tar.gz")
-}
-
 fn is_newer(candidate: &str, current: &str) -> bool {
     match (parse_version(candidate), parse_version(current)) {
         (Some(candidate), Some(current)) => candidate > current,
@@ -278,14 +346,15 @@ mod tests {
 
     /// Builds a release the way the release workflow does, served from file:// URLs.
     fn fake_release(root: &Path, version: &str, binary: &str) -> Release {
-        let folder_name = archive_name(version)
+        let folder_name = Program::Cli
+            .archive_name(version)
             .trim_end_matches(".tar.gz")
             .to_string();
         let folder = root.join(&folder_name);
         fs::create_dir_all(&folder).unwrap();
         fs::write(folder.join("annex"), binary).unwrap();
         fs::set_permissions(folder.join("annex"), Permissions::from_mode(0o755)).unwrap();
-        let archive = root.join(archive_name(version));
+        let archive = root.join(Program::Cli.archive_name(version));
         let packed = Command::new("tar")
             .arg("-czf")
             .arg(&archive)
@@ -295,7 +364,7 @@ mod tests {
             .status()
             .unwrap();
         assert!(packed.success());
-        let checksum = root.join(format!("{}.sha256", archive_name(version)));
+        let checksum = root.join(format!("{}.sha256", Program::Cli.archive_name(version)));
         fs::write(&checksum, format!("{}  x\n", sha256(&archive).unwrap())).unwrap();
         let asset = |path: &Path| Asset {
             name: path.file_name().unwrap().to_string_lossy().into_owned(),
@@ -322,7 +391,7 @@ mod tests {
         let target = root.join("bin/annex");
         fs::create_dir_all(target.parent().unwrap()).unwrap();
         fs::write(&target, "old").unwrap();
-        install_release(&release, "9.9.9", &target).unwrap();
+        install_release(&release, "9.9.9", Program::Cli, &target).unwrap();
         assert_eq!(
             fs::read_to_string(&target).unwrap(),
             "#!/bin/sh\necho annex 9.9.9\n"
@@ -335,17 +404,24 @@ mod tests {
     fn refuses_a_download_whose_checksum_differs() {
         let root = scratch("tampered");
         let release = fake_release(&root, "9.9.9", "#!/bin/sh\necho annex\n");
-        fs::write(root.join(archive_name("9.9.9")), "tampered").unwrap();
+        fs::write(root.join(Program::Cli.archive_name("9.9.9")), "tampered").unwrap();
         let target = root.join("annex");
         fs::write(&target, "old").unwrap();
-        let error = install_release(&release, "9.9.9", &target).unwrap_err();
+        let error = install_release(&release, "9.9.9", Program::Cli, &target).unwrap_err();
         assert!(error.to_string().contains("SHA-256"));
         assert_eq!(fs::read_to_string(&target).unwrap(), "old");
         fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
-    fn matches_the_release_workflow_archive_name() {
-        assert_eq!(archive_name("0.2.0"), "annex-0.2.0-x86_64-linux.tar.gz");
+    fn matches_the_release_workflow_archive_names() {
+        assert_eq!(
+            Program::Cli.archive_name("0.2.0"),
+            "annex-0.2.0-x86_64-linux.tar.gz"
+        );
+        assert_eq!(
+            Program::Manager.archive_name("0.2.0"),
+            "annex-manager-0.2.0-x86_64-linux.tar.gz"
+        );
     }
 }

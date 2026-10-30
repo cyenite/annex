@@ -1,21 +1,4 @@
-mod adb;
-mod bridge;
 mod cli;
-mod desktop;
-mod docker;
-mod doctor;
-mod gpu;
-mod instance;
-mod launcher;
-mod paths;
-mod process;
-mod redroid;
-mod scrcpy;
-mod setup;
-mod snapshot;
-mod update;
-mod waydroid;
-mod window;
 
 use std::io;
 use std::process::ExitCode;
@@ -25,9 +8,10 @@ use std::time::Instant;
 use anyhow::{Result, bail};
 use clap::{CommandFactory, Parser};
 
-use adb::Adb;
+use annex_core::adb::Adb;
+use annex_core::instance::{self, Backend, State, UpOptions};
+use annex_core::{bridge, desktop, doctor, launcher, setup, snapshot, update, window};
 use cli::{BridgeCommand, Cli, Commands, LauncherCommand, SnapCommand};
-use instance::{Backend, State, UpOptions};
 
 /// The last outcome line a command printed, which `--notify` repeats as a notification.
 static OUTCOME: Mutex<Option<String>> = Mutex::new(None);
@@ -81,6 +65,7 @@ fn run(command: Commands) -> Result<ExitCode> {
             dry_run,
             bridge,
             no_bridge,
+            no_manager,
             window_mode,
             repair,
         } => setup::run(setup::Run {
@@ -89,6 +74,7 @@ fn run(command: Commands) -> Result<ExitCode> {
             options: setup::Options {
                 // The bridge belongs to a desktop session; over SSH there is none to start it in.
                 bridge: !no_bridge && (bridge || desktop::has_session()),
+                manager: !no_manager && desktop::has_session(),
                 repair,
                 window_mode,
             },
@@ -193,6 +179,17 @@ fn run(command: Commands) -> Result<ExitCode> {
             if !window::show_once(&adb, &instance::require_running(&name)?)? {
                 report(format!("{name}'s window is already open"));
             }
+        }
+        Commands::Manager => {
+            let manager = launcher::manager_path().ok_or_else(|| {
+                anyhow::anyhow!("Annex Manager isn't installed: `annex setup` installs it from the latest release")
+            })?;
+            std::process::Command::new(&manager)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()?;
+            report("opened Annex Manager".to_string());
         }
         Commands::Launcher(LauncherCommand::Install { name }) => {
             let instance = instance::require(&instance::resolve(name)?)?;

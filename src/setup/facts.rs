@@ -6,12 +6,12 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use super::distro::{Package, PackageManager};
-use super::plan::Facts;
+use super::plan::{Facts, Options};
 use crate::adb::Adb;
 use crate::instance::AndroidVersion;
 use crate::paths::{home, which};
 use crate::scrcpy::Scrcpy;
-use crate::{bridge, docker, waydroid};
+use crate::{bridge, docker, launcher, update, waydroid};
 
 pub const BINDER_MODULE: &str = "binder_linux";
 pub const BINDER_BOOT_FILE: &str = "/etc/modules-load.d/annex-binder.conf";
@@ -21,7 +21,9 @@ pub const IMAGE_RULE_FILE: &str = "/etc/udev/rules.d/90-annex-hide-android-image
 /// 36 "volumes" to the dock and file manager. This marks them for udisks to ignore.
 pub const IMAGE_RULE: &str = "# Added by annex setup: hide the disk images Android mounts inside annex instances.\nSUBSYSTEM==\"block\", KERNEL==\"loop[0-9]*\", ATTR{loop/backing_file}==\"*.apex\", ENV{UDISKS_IGNORE}=\"1\"\n";
 
-pub fn gather() -> Facts {
+/// `options` decides which optional checks are worth their cost (the Manager's needs a network
+/// call).
+pub fn gather(options: Options) -> Facts {
     let manager = PackageManager::detect();
     let unavailable = manager
         .map(|manager| {
@@ -42,6 +44,7 @@ pub fn gather() -> Facts {
         })
         .unwrap_or_default();
     let can_use_docker = can_use_docker();
+    let has_manager = launcher::manager_path().is_some();
     Facts {
         manager,
         unavailable,
@@ -52,6 +55,8 @@ pub fn gather() -> Facts {
         has_docker: which("docker").is_some(),
         has_notify: which("notify-send").is_some(),
         has_adb_key: adb_key_path().is_some_and(|key| key.is_file()),
+        has_manager,
+        has_manager_entry: launcher::has_manager_entry(),
         has_image_rule: has_image_rule(),
         can_use_docker,
         has_window_mode: waydroid::is_installed(),
@@ -61,6 +66,7 @@ pub fn gather() -> Facts {
         is_in_docker_group: is_in_docker_group(),
         is_bridge_installed: bridge::service::state() != "not-installed",
         is_window_mode_ready: waydroid::is_installed() && waydroid::is_initialized(),
+        is_manager_published: options.manager && !has_manager && update::is_manager_published(),
     }
 }
 

@@ -12,21 +12,26 @@ pub struct Facts {
     pub has_docker: bool,
     pub has_notify: bool,
     pub has_adb_key: bool,
+    pub has_manager: bool,
     pub has_image_rule: bool,
     pub can_use_docker: bool,
     pub has_window_mode: bool,
     pub has_window_helper: bool,
+    pub has_manager_entry: bool,
     pub is_docker_running: bool,
     pub has_binder_at_boot: bool,
     pub is_in_docker_group: bool,
     pub is_bridge_installed: bool,
     pub is_window_mode_ready: bool,
+    /// Whether the release matching this version ships the Manager; only looked up when needed.
+    pub is_manager_published: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Options {
     pub bridge: bool,
     pub repair: bool,
+    pub manager: bool,
     pub window_mode: bool,
 }
 
@@ -43,6 +48,8 @@ pub enum Step {
     CreateAdbKey,
     PullImage,
     InstallBridge,
+    InstallManager,
+    AddManagerEntry,
     /// Something setup can't do on this distro; the text says how to do it by hand.
     Manual(String),
 }
@@ -65,6 +72,10 @@ impl Step {
             Self::RestartWindowMode => "Restart window mode's system service".to_string(),
             Self::CreateAdbKey => "Create your adb key".to_string(),
             Self::PullImage => "Download the Android 15 image (about 3 GB)".to_string(),
+            Self::InstallManager => {
+                "Install Annex Manager, the window app for your instances".to_string()
+            }
+            Self::AddManagerEntry => "Add Annex Manager to your app launcher".to_string(),
             Self::InstallBridge => {
                 "Start the desktop bridge with your session (clipboard, notifications)".to_string()
             }
@@ -107,6 +118,8 @@ impl Step {
             Self::CreateAdbKey => "run `adb start-server` once by hand",
             Self::PullImage => "check your network, then run `annex setup` again; it resumes",
             Self::InstallBridge => "run `annex bridge install` from your desktop session",
+            Self::InstallManager => "check your network, then run `annex setup` again",
+            Self::AddManagerEntry => "run `annex setup` from your desktop session",
             Self::Manual(_) => "follow the instruction above",
         }
     }
@@ -200,6 +213,15 @@ pub fn plan(facts: &Facts, options: Options) -> Plan {
     if options.bridge && check(facts.is_bridge_installed, "desktop bridge") {
         steps.push(Step::InstallBridge);
     }
+    if options.manager {
+        if facts.has_manager {
+            if check(facts.has_manager_entry, "Annex Manager") {
+                steps.push(Step::AddManagerEntry);
+            }
+        } else if facts.is_manager_published {
+            steps.push(Step::InstallManager);
+        }
+    }
     Plan { steps, done }
 }
 
@@ -232,15 +254,18 @@ mod tests {
             has_docker: true,
             has_notify: true,
             has_adb_key: true,
+            has_manager: true,
             has_image_rule: true,
             can_use_docker: true,
             has_window_mode: true,
             has_window_helper: true,
+            has_manager_entry: true,
             is_docker_running: true,
             has_binder_at_boot: true,
             is_in_docker_group: true,
             is_bridge_installed: true,
             is_window_mode_ready: true,
+            is_manager_published: true,
         }
     }
 
@@ -336,6 +361,40 @@ mod tests {
             ..ready()
         };
         assert!(plan(&facts, Options::default()).steps.is_empty());
+    }
+
+    #[test]
+    fn a_desktop_without_the_manager_installs_it_when_published() {
+        let facts = Facts {
+            has_manager: false,
+            has_manager_entry: false,
+            ..ready()
+        };
+        let options = Options {
+            manager: true,
+            ..Options::default()
+        };
+        assert_eq!(plan(&facts, options).steps, [Step::InstallManager]);
+        let unpublished = Facts {
+            is_manager_published: false,
+            ..facts
+        };
+        assert!(plan(&unpublished, options).steps.is_empty());
+    }
+
+    #[test]
+    fn an_installed_manager_only_needs_its_launcher_entry() {
+        let facts = Facts {
+            has_manager_entry: false,
+            ..ready()
+        };
+        let options = Options {
+            manager: true,
+            ..Options::default()
+        };
+        let steps = plan(&facts, options).steps;
+        assert_eq!(steps, [Step::AddManagerEntry]);
+        assert!(!steps[0].needs_sudo());
     }
 
     #[test]

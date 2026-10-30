@@ -17,9 +17,9 @@ use std::time::Duration;
 use anyhow::{Result, bail};
 
 use crate::adb::Adb;
-use crate::bridge;
 use crate::instance::AndroidVersion;
 use crate::process::output_within;
+use crate::{bridge, launcher, update};
 pub use plan::Options;
 use plan::{Facts, Step, plan};
 use pull::PullError;
@@ -37,7 +37,7 @@ pub struct Run {
 
 pub fn run(run: Run) -> Result<()> {
     let ui = Ui::new();
-    let facts = facts::gather();
+    let facts = facts::gather(run.options);
     let plan = plan(&facts, run.options);
 
     if !plan.done.is_empty() {
@@ -295,6 +295,15 @@ impl Context {
                 .map_err(|error| simple(step, &format!("{error:#}"))),
             Step::PullImage => self.pull_image(step, task),
             Step::InstallBridge => bridge::service::install()
+                .map(drop)
+                .map_err(|error| simple(step, &format!("{error:#}"))),
+            Step::InstallManager => update::install_manager()
+                .and_then(|is_installed| {
+                    anyhow::ensure!(is_installed, "this version's release has no Annex Manager");
+                    launcher::install_manager_entry().map(drop)
+                })
+                .map_err(|error| simple(step, &format!("{error:#}"))),
+            Step::AddManagerEntry => launcher::install_manager_entry()
                 .map(drop)
                 .map_err(|error| simple(step, &format!("{error:#}"))),
             Step::Manual(_) => Ok(()),

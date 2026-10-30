@@ -77,7 +77,7 @@ impl Mode {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Backend {
     Redroid(Container),
     /// The Android release is only known once the session has run; see `waydroid::release`.
@@ -95,7 +95,7 @@ impl Backend {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Instance {
     pub name: String,
     pub serial: String,

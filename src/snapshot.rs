@@ -58,6 +58,12 @@ pub fn save(name: &str, label: &str) -> Result<PathBuf> {
     Ok(path)
 }
 
+pub fn delete(name: &str, label: &str) -> Result<()> {
+    instance::validate_name(label)?;
+    let path = snapshot_dir(name).join(format!("{label}.tar"));
+    fs::remove_file(&path).with_context(|| format!("no snapshot named {label} for {name}"))
+}
+
 pub fn list(name: &str) -> Result<Vec<Snapshot>> {
     let Ok(entries) = fs::read_dir(snapshot_dir(name)) else {
         return Ok(Vec::new());

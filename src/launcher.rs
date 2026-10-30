@@ -9,10 +9,12 @@ use std::process::{Command, Stdio};
 use anyhow::{Context, Result};
 
 use crate::instance::Instance;
-use crate::paths::{data_home, which};
+use crate::paths::{config_home, data_home, which};
 use crate::snapshot;
 
 const ICON: &str = include_str!("../assets/annex.svg");
+/// The Manager's GTK application id, which names its launcher so its window groups under it.
+pub const MANAGER_ID: &str = "dev.annex.Manager";
 
 /// The app id annex's windows for an instance carry, which ties them to its launcher in the dock.
 pub fn app_id(name: &str) -> String {
@@ -145,6 +147,87 @@ fn refresh_database() {
             .stderr(Stdio::null())
             .status();
     }
+}
+
+/// The Manager binary: next to this annex (how releases and `cargo install` place it), or on PATH.
+pub fn manager_path() -> Option<PathBuf> {
+    env::current_exe()
+        .ok()
+        .and_then(|exe| exe.canonicalize().ok())
+        .map(|exe| exe.with_file_name("annex-manager"))
+        .filter(|candidate| candidate.is_file())
+        .or_else(|| which("annex-manager"))
+}
+
+/// Adds "Annex" to the app launcher when the Manager is installed.
+pub fn install_manager_entry() -> Result<Option<PathBuf>> {
+    let Some(manager) = manager_path() else {
+        return Ok(None);
+    };
+    install_icon()?;
+    let path = data_home()
+        .join("applications")
+        .join(format!("{MANAGER_ID}.desktop"));
+    fs::create_dir_all(path.parent().expect("entry path has a parent"))?;
+    fs::write(&path, render_manager(&manager, false))?;
+    refresh_database();
+    Ok(Some(path))
+}
+
+pub fn has_manager_entry() -> bool {
+    data_home()
+        .join("applications")
+        .join(format!("{MANAGER_ID}.desktop"))
+        .is_file()
+}
+
+pub fn is_manager_autostarted() -> bool {
+    autostart_path().is_file()
+}
+
+pub fn set_manager_autostart(is_on: bool) -> Result<()> {
+    let path = autostart_path();
+    if !is_on {
+        if path.exists() {
+            fs::remove_file(path)?;
+        }
+        return Ok(());
+    }
+    let manager = manager_path().context("Annex Manager isn't installed")?;
+    fs::create_dir_all(path.parent().expect("autostart path has a parent"))?;
+    fs::write(path, render_manager(&manager, true))?;
+    Ok(())
+}
+
+fn render_manager(manager: &Path, is_autostart: bool) -> String {
+    let mut entry = format!(
+        "\
+[Desktop Entry]
+Type=Application
+Version=1.5
+Name=Annex
+GenericName=Android instances
+Comment=Create, open, snapshot and reset Android instances
+Exec={}
+Icon=annex
+Terminal=false
+Categories=Development;Emulator;
+Keywords=android;emulator;device;annex;
+StartupNotify=true
+StartupWMClass={MANAGER_ID}
+",
+        quote(&manager.to_string_lossy())
+    );
+    if is_autostart {
+        entry.push_str("X-GNOME-Autostart-enabled=true\n");
+    }
+    entry
+}
+
+fn autostart_path() -> PathBuf {
+    config_home()
+        .join("autostart")
+        .join(format!("{MANAGER_ID}.desktop"))
 }
 
 fn entry_path(name: &str) -> PathBuf {
