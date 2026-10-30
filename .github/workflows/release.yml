@@ -22,6 +22,15 @@ jobs:
       # may change under a moved tag or a poisoned cache.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      # `annex update` compares the tag with the version the binary reports, so a mismatch
+      # would make every install look out of date.
+      - name: Check the tag matches Cargo.toml
+        run: |
+          crate=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          if [ "${GITHUB_REF_NAME#v}" != "$crate" ]; then
+            echo "::error::tag $GITHUB_REF_NAME doesn't match Cargo.toml's version $crate"
+            exit 1
+          fi
       - run: cargo test --locked
       - run: cargo build --release --locked
       - name: Package

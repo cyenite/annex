@@ -85,7 +85,10 @@ The code is written to be read quickly. Match what's there:
 
 ## Releases
 
-Maintainers tag `vX.Y.Z` on `main`. The release workflow builds the x86_64 binary and attaches it to a GitHub release with the changelog section for that version.
+1. In a pull request, set `version` in `Cargo.toml` (and run `cargo build` to update `Cargo.lock`), and turn the changelog's `Unreleased` section into `## X.Y.Z - YYYY-MM-DD` under a fresh, empty `Unreleased`.
+2. After it merges, tag `vX.Y.Z` on `main` and push the tag.
+
+The release workflow checks the tag matches `Cargo.toml`, builds the x86_64 binary, and attaches it to a GitHub release with the changelog section for that version. `annex update` installs it from there.
 
 ## Code of conduct
 
