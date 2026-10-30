@@ -10,6 +10,7 @@ use clap::{CommandFactory, Parser};
 
 use annex_core::adb::Adb;
 use annex_core::instance::{self, Backend, State, UpOptions};
+use annex_core::location::{self, Location};
 use annex_core::{bridge, desktop, doctor, launcher, setup, snapshot, update, window};
 use cli::{BridgeCommand, Cli, Commands, LauncherCommand, SnapCommand};
 
@@ -39,6 +40,14 @@ fn main() -> ExitCode {
 }
 
 /// Prints a command's result and remembers it for `--notify`.
+fn describe_location(location: Location) -> String {
+    match location {
+        Location::Default => "the default position (37.4220,-122.0841)".to_string(),
+        Location::Host => "this computer's location".to_string(),
+        Location::Fixed { .. } => location.to_string(),
+    }
+}
+
 fn report(outcome: String) {
     println!("{outcome}");
     *OUTCOME.lock().expect("outcome lock") = Some(outcome);
@@ -233,6 +242,45 @@ fn run(command: Commands) -> Result<ExitCode> {
                 plural(apks.len(), "APK"),
                 elapsed()
             );
+        }
+        Commands::Location { args } => {
+            let (name, rest) = instance::split_name(args, 1)?;
+            let (name, wanted) = match &rest[..] {
+                [] => (name, None),
+                [value] => match value.parse::<Location>() {
+                    Ok(wanted) => (name, Some(wanted)),
+                    Err(_) if instance::find(value)?.is_some() => (value.clone(), None),
+                    Err(error) => bail!(error),
+                },
+                _ => bail!("give one instance and one position"),
+            };
+            let instance = instance::require_running(&name)?;
+            let Some(wanted) = wanted else {
+                let current = location::get(&instance)?;
+                if current == Location::Host && !location::is_shared(&name) {
+                    println!(
+                        "{name}: asks for this computer's location, which isn't shared with it: `annex location {name} host` shares it"
+                    );
+                } else {
+                    println!("{name}: {}", describe_location(current));
+                }
+                return Ok(ExitCode::SUCCESS);
+            };
+            location::set(&instance, wanted)?;
+            report(format!("{name} is now at {}", describe_location(wanted)));
+            if wanted == Location::Host {
+                if bridge::service::state() != "active" {
+                    println!(
+                        "warning: the desktop bridge, which shares this computer's location, isn't running: `annex bridge install`"
+                    );
+                }
+                if desktop::is_location_off() {
+                    println!(
+                        "warning: Location Services are off on this computer: turn them on in Settings, Privacy & Security, Location"
+                    );
+                }
+                println!("your desktop may ask once whether Annex can use your location");
+            }
         }
         Commands::Push { args, to } => {
             let (name, paths) = instance::split_name(args, 1)?;
