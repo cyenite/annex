@@ -4,6 +4,16 @@ All notable changes to annex are recorded here. The format follows [Keep a Chang
 
 ## Unreleased
 
+## 0.5.1 - 2026-10-30
+
+### Fixed
+
+- Opening the camera no longer crashes apps. Instances have no camera, but Android still said they had one, so apps went looking for it and the built-in Camera app crashed on the empty list. Instances now report no camera, as a phone without one would, and the Camera app is gone, so apps can tell there is nothing to take a photo with.
+
+### Changed
+
+- Container-mode instances rebuild on their next `annex up` to drop the camera; their data is kept.
+
 ## 0.5.0 - 2026-10-30
 
 ### Added

@@ -41,7 +41,7 @@ GDK_BACKEND=broadway BROADWAY_DISPLAY=:5 cargo run --features manager --bin anne
 | `src/cli.rs` | The command-line interface (clap) |
 | `src/manager/` | Annex Manager (`--features manager`): window, instance cards, detail page, dialogs; work runs off the UI thread through `task::spawn` |
 | `src/instance.rs` | The instance model: modes, states, Android versions, names, the default instance, dispatch to backends |
-| `src/redroid.rs` | Redroid instances as Docker containers: create, rebuild, boot, display settings |
+| `src/redroid.rs`, `android/permissions/` | Redroid instances as Docker containers: create, rebuild, boot, display settings, and the files mounted into every instance (no camera) |
 | `src/waydroid.rs` | Window mode, on Waydroid: start, freeze over D-Bus, state from its cgroup, app windows, the registered name |
 | `src/snapshot.rs` | Snapshot save, list and reset (Redroid only) |
 | `src/location.rs`, `android/gnss/` | `annex location`, and the GNSS driver mounted into every instance. The driver binary is committed; after changing `gnss.cpp`, rebuild it with `android/gnss/build.sh` (needs the Android NDK) and commit it too |

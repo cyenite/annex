@@ -197,6 +197,7 @@ Anyone in the `docker` group can still open a shell in an instance, as with any 
 - **No Google Play.** Apps that need Play Integrity (banking, some games) will not run. Use a real device or an emulator for those. Firebase Cloud Messaging can't register either, so push notifications from a server never arrive; notifications an app posts itself still show.
 - **Location is simulated.** Positions come from annex, not a GPS receiver (see [Location](#location)). There is GPS location but no network location.
 - **No Bluetooth.** Instances can't reach this computer's Bluetooth adapter yet.
+- **No camera.** Instances report that they have no camera, like a phone without one, so apps can't take photos or scan codes on them yet. An app that assumes every phone has a camera needs to handle the case where it finds none.
 - **No Android 16 yet.** Its system services need a kernel feature (ashmem) that mainline kernels no longer have.
 - **x86_64 Linux only** for now.
 
@@ -210,6 +211,7 @@ Anyone in the `docker` group can still open a shell in an instance, as with any 
 | A Flutter debug build crashes on launch | The APK was built for a phone (arm64). Let `flutter run` build for the instance, which is x86_64. |
 | Window mode won't freeze, saying its state is out of sync | Run `annex setup --repair`. |
 | An app says location is off although it's on in Settings, or rejects it as a mock location | Run `annex up` for that instance: an instance that was already running when you updated annex gets its GPS on its next `annex up` (data kept). An app that recorded mock locations before may need its data cleared. |
+| Opening the camera crashes an app, or the Camera app stops | Run `annex up` for that instance: an instance that was already running when you updated annex reports that it has no camera from its next `annex up` (data kept). |
 | No annex menu in the panel | On GNOME, enable the AppIndicator extension; `annex doctor` checks for it. |
 | Dozens of small drives fill the dock while an instance runs | Run `annex setup`. Android mounts each of its system modules as a disk image, and setup tells your desktop to ignore them. |
 
