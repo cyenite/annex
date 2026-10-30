@@ -12,6 +12,7 @@ pub struct Facts {
     pub has_docker: bool,
     pub has_notify: bool,
     pub has_adb_key: bool,
+    pub has_image_rule: bool,
     pub can_use_docker: bool,
     pub has_window_mode: bool,
     pub has_window_helper: bool,
@@ -36,6 +37,7 @@ pub enum Step {
     JoinDockerGroup,
     LoadBinder,
     LoadBinderAtBoot,
+    HideAndroidImages,
     InitWindowMode,
     RestartWindowMode,
     CreateAdbKey,
@@ -56,6 +58,9 @@ impl Step {
             Self::JoinDockerGroup => "Let your user run containers without sudo".to_string(),
             Self::LoadBinder => "Load the Android binder kernel module".to_string(),
             Self::LoadBinderAtBoot => "Load the binder module at every boot".to_string(),
+            Self::HideAndroidImages => {
+                "Keep Android's internal disk images out of your dock and file manager".to_string()
+            }
             Self::InitWindowMode => "Download and set up window mode's system image".to_string(),
             Self::RestartWindowMode => "Restart window mode's system service".to_string(),
             Self::CreateAdbKey => "Create your adb key".to_string(),
@@ -75,6 +80,7 @@ impl Step {
                 | Self::JoinDockerGroup
                 | Self::LoadBinder
                 | Self::LoadBinderAtBoot
+                | Self::HideAndroidImages
                 | Self::InitWindowMode
                 | Self::RestartWindowMode
         )
@@ -90,6 +96,9 @@ impl Step {
             Self::JoinDockerGroup => "add yourself by hand: `sudo usermod -aG docker $USER`",
             Self::LoadBinder | Self::LoadBinderAtBoot => {
                 "your kernel may lack Android binder support; Ubuntu's, Arch's linux-zen and Fedora's ship it"
+            }
+            Self::HideAndroidImages => {
+                "see `udevadm control --reload-rules` for errors, then run `annex setup` again"
             }
             Self::InitWindowMode => {
                 "the image download can stall on a slow mirror; run `annex setup --window-mode` again to retry"
@@ -173,6 +182,9 @@ pub fn plan(facts: &Facts, options: Options) -> Plan {
     if check(facts.has_binder_at_boot, "binder at boot") {
         steps.push(Step::LoadBinderAtBoot);
     }
+    if check(facts.has_image_rule, "Android disk images hidden") {
+        steps.push(Step::HideAndroidImages);
+    }
     if options.window_mode && check(facts.is_window_mode_ready, "window mode set up") {
         steps.push(Step::InitWindowMode);
     }
@@ -220,6 +232,7 @@ mod tests {
             has_docker: true,
             has_notify: true,
             has_adb_key: true,
+            has_image_rule: true,
             can_use_docker: true,
             has_window_mode: true,
             has_window_helper: true,
@@ -258,6 +271,7 @@ mod tests {
                 Step::JoinDockerGroup,
                 Step::LoadBinder,
                 Step::LoadBinderAtBoot,
+                Step::HideAndroidImages,
                 Step::CreateAdbKey,
                 Step::PullImage,
             ]

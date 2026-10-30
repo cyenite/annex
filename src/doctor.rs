@@ -71,6 +71,7 @@ pub fn run() -> Vec<Check> {
         desktop_clipboard(),
         desktop_notifications(),
         panel_menu(),
+        disk_images(),
     ]
 }
 
@@ -265,6 +266,22 @@ fn panel_menu() -> Check {
             Level::Warn,
             "panel menu",
             "your panel shows no app indicators: on GNOME, enable the AppIndicator extension",
+        )
+    }
+}
+
+fn disk_images() -> Check {
+    if facts::has_image_rule() {
+        Check::new(
+            Level::Ok,
+            "disk images",
+            "Android's internal disks stay out of your dock",
+        )
+    } else {
+        Check::new(
+            Level::Warn,
+            "disk images",
+            "each running instance shows about 36 drives in your dock: run `annex setup`",
         )
     }
 }
