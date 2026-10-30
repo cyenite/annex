@@ -44,7 +44,7 @@ pub enum Commands {
         #[arg(long)]
         repair: bool,
     },
-    /// Create or start an instance and wait until adb can use it
+    /// Create or start an instance, wait until adb can use it, and open its window
     Up {
         /// The instance [default: `default`]
         name: Option<String>,
@@ -58,6 +58,9 @@ pub enum Commands {
         /// on an existing instance rebuilds its container and keeps its data
         #[arg(long, value_name = "WIDTHxHEIGHT/DPI")]
         display: Option<Display>,
+        /// Don't open the instance's window; it never opens outside a desktop session
+        #[arg(long)]
+        no_window: bool,
     },
     /// Stop an instance (its data is kept)
     Down {
@@ -145,6 +148,12 @@ pub enum Commands {
     /// Share the clipboard and notifications between instances and the desktop
     #[command(subcommand)]
     Bridge(BridgeCommand),
+    /// Update annex to the latest release
+    Update {
+        /// Only check whether a newer release exists
+        #[arg(long)]
+        check: bool,
+    },
     /// Show the version, project links and third-party licenses
     About {
         /// Print the notices for the software annex uses

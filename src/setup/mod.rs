@@ -252,6 +252,31 @@ impl Context {
                     ),
                 ]),
             ),
+            Step::HideAndroidImages => {
+                // The rule goes in as an argument, not interpolated, so its quotes stay intact.
+                self.root(
+                    step,
+                    &args(&[
+                        "sh",
+                        "-c",
+                        "printf '%s' \"$1\" > \"$2\"",
+                        "sh",
+                        facts::IMAGE_RULE,
+                        facts::IMAGE_RULE_FILE,
+                    ]),
+                )?;
+                self.root(step, &args(&["udevadm", "control", "--reload-rules"]))?;
+                // Applies the rule to the disk images of instances already running.
+                self.root(
+                    step,
+                    &args(&[
+                        "udevadm",
+                        "trigger",
+                        "--subsystem-match=block",
+                        "--action=change",
+                    ]),
+                )
+            }
             Step::InitWindowMode => {
                 task.detail("downloading, this can take several minutes");
                 self.root(step, &args(&["waydroid", "init"]))?;
