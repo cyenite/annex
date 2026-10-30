@@ -11,6 +11,7 @@ All notable changes to annex are recorded here. The format follows [Keep a Chang
 - App launcher entries for every instance, with Freeze, Thaw, Stop and Reset to snapshot actions, and an annex icon. `annex launcher install|remove`, and `annex open-window`, which starts an instance if needed and opens its screen.
 - A panel menu in the desktop bridge listing every instance with its actions, plus New instance.
 - `annex about` and `annex about --licenses`, and THIRD_PARTY_NOTICES.md.
+- `annex update` installs the latest release after verifying its SHA-256 (or rebuilds the latest source while none is published), then restarts the bridge; `--check` only looks.
 - `annex doctor` checks for a panel that can show the bridge's menu.
 - `annex up --display WIDTHxHEIGHT/DPI` sets an instance's screen; changing it on an existing instance rebuilds the container and keeps its data.
 - `annex install`, `annex push` and `annex pull` for APKs and files.
@@ -26,11 +27,14 @@ All notable changes to annex are recorded here. The format follows [Keep a Chang
 - `annex ls` shows each instance's mode (container or window).
 - Messages, help and `doctor` describe modes and capabilities instead of naming the projects behind them.
 - `annex doctor` colours its status labels on a terminal (plain when piped or with NO_COLOR).
+- `annex up` opens the instance's window once it's ready, unless one is already open, `--no-window` is given, or there is no desktop session.
+- `annex open-window` (launchers) no longer stacks a second window on an instance that has one.
 - adb commands that can block (on a frozen or half-booted instance) now time out.
 - `annex open` on Redroid switches the instance's adbd to root the first time, because Redroid's shell user can't create the trusted display scrcpy needs.
 
 ### Fixed
 
+- Each running instance added about 36 drives to the dock and file manager: Android mounts its system modules through the host's loop devices. `annex setup` now installs a udev rule that hides them, and `annex doctor` reports when it's missing.
 - `annex reset --to` failed with "device or resource busy" on instances created since adb keys were masked: the snapshot is now restored into the data volume before the container's masks are mounted.
 
 ## 0.1.0

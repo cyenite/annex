@@ -13,27 +13,6 @@
 
 <img src="docs/images/hero.png" alt="A terminal running annex up, ls, freeze, thaw, snap save and install, next to the instance's Android 15 home screen" width="100%">
 
-annex runs Android in a container on your own kernel instead of a virtual machine. On the reference machine, the edit, install and launch loop was about 8x faster than an Android Studio emulator, and idle memory was about a third.
-
-| | Android Studio emulator | annex |
-|---|---|---|
-| Cold boot | 70.7 s | 17.9 s |
-| Resume | 6.6 s | 0.16 s |
-| Reinstall + launch an app | 17.3 s | 2.0 s |
-| Idle memory | 1.39 GB | 0.53 GB |
-
-Medians of 3 runs on an i7-1365U laptop with Intel graphics. Method and raw data: [phase0/RESULTS.md](phase0/RESULTS.md).
-
-## Quick start
-
-```sh
-annex setup               # check this machine, show the plan, fix what's missing
-annex up                  # start the `default` instance (Android 15)
-flutter run -d 127.0.0.1:5600
-```
-
-`annex up` prints the instance's adb serial. Android Studio lists it in the device picker like any phone, and it appears in your desktop's app launcher.
-
 ## Install
 
 annex is a single binary. You need Rust 1.88 or newer to build it:
@@ -45,6 +24,8 @@ annex setup
 
 Tagged releases also publish a prebuilt x86_64 Linux binary on the [Releases page](https://github.com/cyenite/annex/releases).
 
+To update later, run `annex update`. It installs the latest release after checking its SHA-256, or rebuilds the latest source while no release is published; `annex update --check` only looks.
+
 ### What `annex setup` does
 
 `annex setup` checks the machine, then shows what it will change, split into what needs administrator access and what doesn't, and asks once. It can:
@@ -52,6 +33,7 @@ Tagged releases also publish a prebuilt x86_64 Linux binary on the [Releases pag
 - load the Android binder kernel module now and at every boot;
 - install the container engine, the Android debug tools and the window helper with your distribution's package manager (apt, dnf, pacman or zypper);
 - let your user run containers without sudo;
+- keep the disk images Android mounts inside each instance from showing up as drives in your dock and file manager;
 - download the Android 15 image, with live speed and time left;
 - with `--bridge`, run the desktop bridge with your session;
 - with `--window-mode`, set up window mode.
@@ -70,6 +52,29 @@ You can also check without changing anything: `annex doctor`.
 - **An Intel or AMD GPU** for hardware rendering. NVIDIA works with software rendering.
 - Everything else, `annex setup` installs.
 
+## Quick start
+
+```sh
+annex setup               # check this machine, show the plan, fix what's missing
+annex up                  # start the `default` instance (Android 15) and open its window
+flutter run -d 127.0.0.1:5600
+```
+
+`annex up` prints the instance's adb serial and opens its window; `--no-window` skips the window, and none opens outside a desktop session, so scripts and CI are unaffected. Android Studio lists the instance in the device picker like any phone, and it appears in your desktop's app launcher.
+
+## Why annex
+
+annex runs Android in a container on your own kernel instead of a virtual machine. On the reference machine, the edit, install and launch loop was about 8x faster than an Android Studio emulator, and idle memory was about a third.
+
+| | Android Studio emulator | annex |
+|---|---|---|
+| Cold boot | 70.7 s | 17.9 s |
+| Resume | 6.6 s | 0.16 s |
+| Reinstall + launch an app | 17.3 s | 2.0 s |
+| Idle memory | 1.39 GB | 0.53 GB |
+
+Medians of 3 runs on an i7-1365U laptop with Intel graphics. Method and raw data: [phase0/RESULTS.md](phase0/RESULTS.md).
+
 ## Using annex
 
 Commands that act on one instance take its name. Leave the name out to mean `default`, or the only running instance.
@@ -77,7 +82,7 @@ Commands that act on one instance take its name. Leave the name out to mean `def
 ### Instances
 
 ```sh
-annex up                                # create or start `default` (Android 15)
+annex up                                # create or start `default` (Android 15), open its window
 annex up old --android 13               # another instance, on Android 13
 annex up tablet --display 1600x2560/320 # screen size and density
 annex ls                                # list instances
@@ -177,6 +182,7 @@ Anyone in the `docker` group can still open a shell in an instance, as with any 
 | A Flutter debug build crashes on launch | The APK was built for a phone (arm64). Let `flutter run` build for the instance, which is x86_64. |
 | Window mode won't freeze, saying its state is out of sync | Run `annex setup --repair`. |
 | No annex menu in the panel | On GNOME, enable the AppIndicator extension; `annex doctor` checks for it. |
+| Dozens of small drives fill the dock while an instance runs | Run `annex setup`. Android mounts each of its system modules as a disk image, and setup tells your desktop to ignore them. |
 
 ## How it works
 
