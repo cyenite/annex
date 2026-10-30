@@ -44,7 +44,7 @@ pub enum Commands {
         #[arg(long)]
         repair: bool,
     },
-    /// Create or start an instance and wait until adb can use it
+    /// Create or start an instance, wait until adb can use it, and open its window
     Up {
         /// The instance [default: `default`]
         name: Option<String>,
@@ -58,6 +58,9 @@ pub enum Commands {
         /// on an existing instance rebuilds its container and keeps its data
         #[arg(long, value_name = "WIDTHxHEIGHT/DPI")]
         display: Option<Display>,
+        /// Don't open the instance's window; it never opens outside a desktop session
+        #[arg(long)]
+        no_window: bool,
     },
     /// Stop an instance (its data is kept)
     Down {

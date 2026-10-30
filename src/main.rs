@@ -106,14 +106,16 @@ fn run(command: Commands) -> Result<ExitCode> {
             mode,
             android,
             display,
+            no_window,
         } => {
+            let adb = Adb::locate()?;
             let name = name.unwrap_or_else(|| instance::DEFAULT_NAME.to_string());
             let options = UpOptions {
                 mode,
                 display,
                 android,
             };
-            let instance = instance::up(&Adb::locate()?, &name, options)?;
+            let instance = instance::up(&adb, &name, options)?;
             launcher::refresh_or_install(&instance);
             report(format!(
                 "{name} ready at {} (Android {}) in {}",
@@ -121,6 +123,14 @@ fn run(command: Commands) -> Result<ExitCode> {
                 instance.android(),
                 elapsed()
             ));
+            // The instance is up either way, so a window that fails to open is only a warning:
+            // scripts waiting on `annex up` must not see a failure.
+            if !no_window
+                && desktop::has_session()
+                && let Err(error) = window::show_once(&adb, &instance)
+            {
+                eprintln!("warning: {name} is up, but its window didn't open: {error:#}");
+            }
         }
         Commands::Down { name } => {
             let name = instance::resolve(name)?;
@@ -150,7 +160,9 @@ fn run(command: Commands) -> Result<ExitCode> {
                     launcher::refresh_or_install(&instance);
                 }
             }
-            window::show(&adb, &instance::require_running(&name)?)?;
+            if !window::show_once(&adb, &instance::require_running(&name)?)? {
+                report(format!("{name}'s window is already open"));
+            }
         }
         Commands::Launcher(LauncherCommand::Install { name }) => {
             let instance = instance::require(&instance::resolve(name)?)?;

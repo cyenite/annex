@@ -1,3 +1,4 @@
+use std::env;
 use std::process::Command;
 use std::time::Duration;
 
@@ -6,6 +7,12 @@ use crate::process::output_within;
 const TITLE_MAX_CHARS: usize = 120;
 const BODY_MAX_CHARS: usize = 600;
 const NOTIFY_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Whether annex runs inside a graphical session that can show windows, which it doesn't over
+/// SSH, in CI or from a plain TTY.
+pub fn has_session() -> bool {
+    env::var_os("WAYLAND_DISPLAY").is_some() || env::var_os("DISPLAY").is_some()
+}
 
 /// Shows a desktop notification from annex itself, for commands run from a launcher or menu
 /// with no terminal to print to. Silently does nothing on a system without notify-send.
