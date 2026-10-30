@@ -34,9 +34,13 @@ pub enum Commands {
         /// Show the plan and change nothing
         #[arg(long)]
         dry_run: bool,
-        /// Also run the desktop bridge with your session (clipboard, notifications)
-        #[arg(long)]
+        /// Kept for scripts written for 0.2.0: the bridge is now set up by default
+        #[arg(long, hide = true)]
         bridge: bool,
+        /// Don't run the desktop bridge with your session (clipboard, notifications, panel menu);
+        /// it is skipped anyway outside a desktop session
+        #[arg(long, conflicts_with = "bridge")]
+        no_bridge: bool,
         /// Also set up window mode (apps in native desktop windows)
         #[arg(long)]
         window_mode: bool,

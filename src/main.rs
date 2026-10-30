@@ -80,13 +80,15 @@ fn run(command: Commands) -> Result<ExitCode> {
             yes,
             dry_run,
             bridge,
+            no_bridge,
             window_mode,
             repair,
         } => setup::run(setup::Run {
             is_yes: yes,
             is_dry_run: dry_run,
             options: setup::Options {
-                bridge,
+                // The bridge belongs to a desktop session; over SSH there is none to start it in.
+                bridge: !no_bridge && (bridge || desktop::has_session()),
                 repair,
                 window_mode,
             },
