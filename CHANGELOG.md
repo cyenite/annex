@@ -4,6 +4,18 @@ All notable changes to annex are recorded here. The format follows [Keep a Chang
 
 ## Unreleased
 
+### Added
+
+- Annex Manager (`annex-manager`), a GTK 4 / libadwaita window app: instance cards with live actions, a page per instance with its details, screen size and snapshots (save, restore, delete), a New instance dialog, drag-and-drop APK install, and settings for the bridge and autostart. Open it from the "Annex" launcher entry, the panel menu or `annex manager`.
+- `annex setup` installs Annex Manager on a desktop from the release matching its version and adds its launcher entry; `annex update` updates it with annex. Releases publish it as a second archive.
+- `annex setup --no-bridge` and `--no-manager`.
+
+### Changed
+
+- `annex setup` sets up the desktop bridge by default in a desktop session; `--bridge` is no longer needed.
+- Instances appear in IDEs as "Annex <Name> <version>" instead of the image's "redroid15 x86 64"; existing instances pick it up on their next `annex up` (data kept).
+- The release archive includes THIRD_PARTY_NOTICES.md.
+
 ## 0.2.0 - 2026-10-30
 
 ### Added
