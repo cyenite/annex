@@ -14,7 +14,7 @@ use crate::{docker, gpu};
 const PORTS: std::ops::Range<u16> = 5600..5700;
 const BOOT_TIMEOUT: Duration = Duration::from_secs(180);
 const PULL_ATTEMPTS: u32 = 3;
-const CONTAINER_CONFIG: &str = "3";
+const CONTAINER_CONFIG: &str = "4";
 const ADB_KEYS_PATH: &str = "/product/etc/security/adb_keys";
 // adbd also trusts keys saved on the data volume ("always allow" and wireless pairings). Masking
 // both with a read-only /dev/null means only the mounted user key is ever trusted, including on
@@ -304,6 +304,10 @@ fn create(adb: &Adb, name: &str, container: &Container) -> Result<()> {
     let gpu_argument = format!("androidboot.redroid_gpu_mode={gpu_mode}");
     let display_label = format!("annex.display={display}");
     let android_label = format!("annex.android={}", android.label());
+    // IDEs list devices by model, which would otherwise be the image's "redroid15_x86_64". The
+    // boot arguments split on spaces, so words are joined with underscores, which Flutter and
+    // VS Code show as spaces.
+    let model = format!("ro.product.model={}", model_name(name, *android));
     let bluetooth_mask = mask(BLUETOOTH_SIM_INIT);
     let saved_keys_mask = mask(SAVED_ADB_KEYS);
     let wireless_keys_mask = mask(SAVED_WIRELESS_KEYS);
@@ -341,6 +345,9 @@ fn create(adb: &Adb, name: &str, container: &Container) -> Result<()> {
         android.image(),
         "androidboot.use_memfd=true",
         "ro.adb.secure=1",
+        &model,
+        "ro.product.brand=Annex",
+        "ro.product.manufacturer=Annex",
         &gpu_argument,
         &width,
         &height,
@@ -415,6 +422,22 @@ fn wait_until_booted(instance: &Instance) -> Result<()> {
     }
 }
 
+/// "Annex_Default_15" for the instance `default` on Android 15.
+fn model_name(name: &str, android: AndroidVersion) -> String {
+    let words: Vec<String> = name
+        .split('-')
+        .filter(|word| !word.is_empty())
+        .map(|word| {
+            let mut chars = word.chars();
+            chars
+                .next()
+                .map(|first| first.to_uppercase().chain(chars).collect())
+                .unwrap_or_default()
+        })
+        .collect();
+    format!("Annex_{}_{}", words.join("_"), android.label())
+}
+
 fn mask(path: &str) -> String {
     format!("type=bind,src=/dev/null,dst={path},readonly")
 }
@@ -436,7 +459,7 @@ mod tests {
 
     #[test]
     fn parses_a_current_container() {
-        let instance = parse("running\tpixel\t15\t5600\t3\t720x1280/320").unwrap();
+        let instance = parse("running\tpixel\t15\t5600\t4\t720x1280/320").unwrap();
         assert_eq!(instance.name, "pixel");
         assert_eq!(instance.serial, "127.0.0.1:5600");
         assert_eq!(instance.state, State::Running);
@@ -482,6 +505,18 @@ mod tests {
         assert!(parse("running\tx\t16\t5600\t3").is_err());
         assert!(parse("running\tx\t15\tnot-a-port\t3").is_err());
         assert!(parse("running\tx").is_err());
+    }
+
+    #[test]
+    fn names_the_device_after_the_instance() {
+        assert_eq!(
+            model_name("default", AndroidVersion::Android15),
+            "Annex_Default_15"
+        );
+        assert_eq!(
+            model_name("old-phone", AndroidVersion::Android13),
+            "Annex_Old_Phone_13"
+        );
     }
 
     #[test]
