@@ -4,6 +4,8 @@ All notable changes to annex are recorded here. The format follows [Keep a Chang
 
 ## Unreleased
 
+## 0.3.0 - 2026-10-30
+
 ### Added
 
 - Annex Manager (`annex-manager`), a GTK 4 / libadwaita window app: instance cards with live actions, a page per instance with its details, screen size and snapshots (save, restore, delete), a New instance dialog, drag-and-drop APK install, and settings for the bridge and autostart. Open it from the "Annex" launcher entry, the panel menu or `annex manager`.
