@@ -1,5 +1,6 @@
 mod cli;
 
+use std::fs;
 use std::io;
 use std::process::ExitCode;
 use std::sync::Mutex;
@@ -13,7 +14,7 @@ use annex_core::instance::{self, Backend, State, UpOptions};
 use annex_core::location::{self, Fix, Location};
 use annex_core::network::{self, Condition};
 use annex_core::preferences::{self, Preferences};
-use annex_core::{bridge, desktop, doctor, launcher, setup, snapshot, update, window};
+use annex_core::{bridge, capture, desktop, doctor, launcher, setup, snapshot, update, window};
 use cli::{BridgeCommand, Cli, Commands, LauncherCommand, SnapCommand};
 
 /// Beyond this, the computer's own location is too rough to place an instance at an address.
@@ -375,6 +376,47 @@ fn run(command: Commands) -> Result<ExitCode> {
                     network::set(&instance, condition)?;
                     report(format!("{name} is now {}", condition.describe()));
                 }
+            }
+        }
+        Commands::Record { args, output } => {
+            let (name, rest) = instance::split_name(args, 1)?;
+            let instance = instance::require_running(&name)?;
+            match (&rest[..], output) {
+                ([action], Some(output)) if action == "start" => {
+                    let path = capture::start_recording(&Adb::locate()?, &instance, &output)?;
+                    report(format!(
+                        "recording {name} to {}: `annex record {name} stop` finishes it",
+                        path.display()
+                    ));
+                }
+                ([action], None) if action == "start" => {
+                    bail!("give the video to write: `annex record {name} start -o run.mp4`")
+                }
+                ([action], None) if action == "stop" => {
+                    let path = capture::stop_recording(&instance)?;
+                    let megabytes = fs::metadata(&path)
+                        .map_or(0.0, |metadata| metadata.len() as f64 / 1_048_576.0);
+                    report(format!(
+                        "saved {name}'s recording to {} ({megabytes:.1} MB)",
+                        path.display()
+                    ));
+                }
+                ([action], Some(_)) if action == "stop" => {
+                    bail!("`stop` writes to the file given at `start`; leave out -o")
+                }
+                _ => bail!("give `start -o FILE` or `stop`"),
+            }
+        }
+        Commands::Logs {
+            name,
+            output,
+            since,
+        } => {
+            let name = instance::resolve(name)?;
+            let instance = instance::require_running(&name)?;
+            capture::write_logs(&Adb::locate()?, &instance, since, output.as_deref())?;
+            if let Some(output) = output {
+                eprintln!("wrote {name}'s log to {}", output.display());
             }
         }
         Commands::Push { args, to } => {

@@ -13,6 +13,8 @@ All notable changes to annex are recorded here. The format follows [Keep a Chang
 - `annex doctor` and `annex setup` notice when they run in a container (such as an LXD CI runner) and say what to do on the host, instead of trying to load kernel modules.
 - `annex net [NAME] online|offline|slow|lossy` changes an instance's network until it restarts. `offline` blocks every installed app through Android's own firewall, so apps are told they have no network; `slow` and `lossy` shape the connection. adb always keeps working.
 - `annex setup` loads the kernel's traffic shaping modules on machines that don't load them on demand, and `annex doctor` checks for them.
+- `annex record [NAME] start -o FILE` and `annex record [NAME] stop` record an instance's screen to an MP4 or MKV file, in the background and without a window or time limit, so CI runs can keep video evidence.
+- `annex logs [NAME] [-o FILE] [--since 10m]` writes Android's log in logcat's threadtime format to a file or the terminal.
 
 ### Changed
 

@@ -124,6 +124,22 @@ impl Adb {
         Ok(())
     }
 
+    /// Runs a device command with its output going to `stdout`, such as a file, for output too
+    /// large to hold in memory.
+    pub fn run_into(&self, serial: &str, args: &[&str], stdout: Stdio) -> Result<()> {
+        let status = Command::new(&self.path)
+            .args(["-s", serial])
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(stdout)
+            .status()
+            .context("failed to run adb")?;
+        if !status.success() {
+            bail!("adb {} failed ({status})", args.first().unwrap_or(&""));
+        }
+        Ok(())
+    }
+
     pub fn is_root(&self, serial: &str) -> bool {
         self.shell(serial, "id -u", COMMAND_TIMEOUT)
             .is_ok_and(|uid| uid == "0")

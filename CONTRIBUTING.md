@@ -47,6 +47,7 @@ GDK_BACKEND=broadway BROADWAY_DISPLAY=:5 cargo run --features manager --bin anne
 | `src/location.rs`, `android/gnss/` | `annex location`, and the GNSS driver mounted into every instance. The driver binary is committed; after changing `gnss.cpp`, rebuild it with `android/gnss/build.sh` (needs the Android NDK) and commit it too |
 | `src/preferences.rs` | Time zone, language and animations that `annex up` sets after boot |
 | `src/network.rs` | `annex net`: offline through Android's per-app firewall, slow and lossy through tc netem, adb never shaped |
+| `src/capture.rs` | `annex record` (a window-less scrcpy found again through `/proc`) and `annex logs` |
 | `src/window.rs` | Screen and per-app windows for both backends |
 | `src/launcher.rs`, `assets/annex.svg` | App launcher entries and the icon |
 | `src/setup/` | `annex setup`: machine facts (shared with `doctor`), the plan, distro packages, image download, progress UI |

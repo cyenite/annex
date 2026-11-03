@@ -155,6 +155,7 @@ annex down e2e                          # an ephemeral instance is deleted with 
 - Without a desktop session (SSH, CI), `annex up` opens no window and adds no app launcher entry; ephemeral instances never get one.
 - In a container (`systemd-detect-virt --container`), `annex doctor` and `annex setup` say what to do on the host: the container shares the host's kernel, so the host loads binder (`sudo modprobe binder_linux`, and at boot through /etc/modules-load.d/), and the container must be privileged and nested.
 - `setup --ci` needs root or passwordless sudo, and exits non-zero when something is left for a person to do.
+
 ### Network conditions
 
 Test how an app behaves offline or on a poor connection:
@@ -168,6 +169,19 @@ annex net online                        # back to normal
 ```
 
 `offline` blocks every installed app through Android's own firewall, so Android tells the apps they have no network, as a phone with no signal would; apps installed afterwards aren't blocked until you run `annex net offline` again. `slow` and `lossy` shape the instance's network connection. adb is never affected, so IDEs and test runners stay connected. A condition lasts until the instance restarts. `slow` and `lossy` need the kernel's traffic shaping modules, which most kernels load on demand; `annex setup` loads them where they don't. Container mode only.
+
+### Recordings and logs
+
+Keep evidence of a test run:
+
+```sh
+annex record e2e start -o run.mp4       # record the screen in the background, no window
+annex record e2e stop                   # finish the video
+annex logs e2e -o logcat.txt            # Android's log, logcat's threadtime format
+annex logs e2e --since 10m              # only the last 10 minutes, to the terminal
+```
+
+A recording has no time limit (Android's own screen recorder stops at 3 minutes) and needs no desktop session, so it works on CI runners; `stop` works from any shell or a later CI step. Android keeps only its most recent log, so for a long run, save it before the instance stops.
 
 ## On your desktop
 
