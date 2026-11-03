@@ -155,6 +155,19 @@ annex down e2e                          # an ephemeral instance is deleted with 
 - Without a desktop session (SSH, CI), `annex up` opens no window and adds no app launcher entry; ephemeral instances never get one.
 - In a container (`systemd-detect-virt --container`), `annex doctor` and `annex setup` say what to do on the host: the container shares the host's kernel, so the host loads binder (`sudo modprobe binder_linux`, and at boot through /etc/modules-load.d/), and the container must be privileged and nested.
 - `setup --ci` needs root or passwordless sudo, and exits non-zero when something is left for a person to do.
+### Network conditions
+
+Test how an app behaves offline or on a poor connection:
+
+```sh
+annex net offline                       # every installed app loses its network
+annex net slow                          # about 1 Mbit/s each way, 300 ms added latency
+annex net lossy                         # one packet in ten lost, 50 ms added latency
+annex net                               # show the current condition
+annex net online                        # back to normal
+```
+
+`offline` blocks every installed app through Android's own firewall, so Android tells the apps they have no network, as a phone with no signal would; apps installed afterwards aren't blocked until you run `annex net offline` again. `slow` and `lossy` shape the instance's network connection. adb is never affected, so IDEs and test runners stay connected. A condition lasts until the instance restarts. `slow` and `lossy` need the kernel's traffic shaping modules, which most kernels load on demand; `annex setup` loads them where they don't. Container mode only.
 
 ## On your desktop
 

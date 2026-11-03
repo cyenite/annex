@@ -24,6 +24,8 @@ pub struct Facts {
     pub is_in_docker_group: bool,
     pub is_bridge_installed: bool,
     pub is_window_mode_ready: bool,
+    /// Whether tc can shape traffic for `annex net slow` and `lossy`.
+    pub can_shape_network: bool,
     /// Whether the release matching this version ships the Manager; only looked up when needed.
     pub is_manager_published: bool,
     /// The kind of container this machine is (`lxc`, `docker`), whose kernel is its host's.
@@ -46,6 +48,7 @@ pub enum Step {
     LoadBinder,
     LoadBinderAtBoot,
     HideAndroidImages,
+    LoadNetworkModules,
     InitWindowMode,
     RestartWindowMode,
     CreateAdbKey,
@@ -71,6 +74,9 @@ impl Step {
             Self::HideAndroidImages => {
                 "Keep Android's internal disk images out of your dock and file manager".to_string()
             }
+            Self::LoadNetworkModules => {
+                "Load the kernel's traffic shaping modules now and at every boot (`annex net slow` and `lossy`)".to_string()
+            }
             Self::InitWindowMode => "Download and set up window mode's system image".to_string(),
             Self::RestartWindowMode => "Restart window mode's system service".to_string(),
             Self::CreateAdbKey => "Create your adb key".to_string(),
@@ -95,6 +101,7 @@ impl Step {
                 | Self::LoadBinder
                 | Self::LoadBinderAtBoot
                 | Self::HideAndroidImages
+                | Self::LoadNetworkModules
                 | Self::InitWindowMode
                 | Self::RestartWindowMode
         )
@@ -113,6 +120,9 @@ impl Step {
             }
             Self::HideAndroidImages => {
                 "see `udevadm control --reload-rules` for errors, then run `annex setup` again"
+            }
+            Self::LoadNetworkModules => {
+                "your kernel may lack traffic shaping: check `modinfo sch_netem`"
             }
             Self::InitWindowMode => {
                 "the image download can stall on a slow mirror; run `annex setup --window-mode` again to retry"
@@ -208,6 +218,9 @@ pub fn plan(facts: &Facts, options: Options) -> Plan {
             steps.push(Step::HideAndroidImages);
         }
     }
+    if check(facts.can_shape_network, "traffic shaping") {
+        steps.push(Step::LoadNetworkModules);
+    }
     if options.window_mode && check(facts.is_window_mode_ready, "window mode set up") {
         steps.push(Step::InitWindowMode);
     }
@@ -275,6 +288,7 @@ mod tests {
             is_in_docker_group: true,
             is_bridge_installed: true,
             is_window_mode_ready: true,
+            can_shape_network: true,
             is_manager_published: true,
             container: None,
         }
@@ -308,6 +322,7 @@ mod tests {
                 Step::LoadBinder,
                 Step::LoadBinderAtBoot,
                 Step::HideAndroidImages,
+                Step::LoadNetworkModules,
                 Step::CreateAdbKey,
                 Step::PullImage,
             ]

@@ -167,6 +167,19 @@ Annex may use it. A computer without GPS often knows its location only roughly."
         #[arg(value_name = "ARGS", num_args = 0..=2, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// Show or set an instance's network: online, offline, slow or lossy
+    #[command(
+        override_usage = "annex net [NAME] [online | offline | slow | lossy]",
+        after_help = "With no condition, shows the current one. offline blocks every installed app, and \
+Android tells them they have no network; slow is about 1 Mbit/s each way with 300 ms added latency; \
+lossy drops one packet in ten. adb always keeps working. A condition lasts until the instance \
+restarts; `online` ends it sooner. Container mode only."
+    )]
+    Net {
+        /// An optional instance, then the condition
+        #[arg(value_name = "ARGS", num_args = 0..=2)]
+        args: Vec<String>,
+    },
     /// Copy files or folders from this machine to an instance
     #[command(override_usage = "annex push [NAME] <PATH>... [--to <FOLDER>]")]
     Push {
@@ -335,6 +348,18 @@ mod tests {
         assert_eq!(animations, Some(Animations::Off));
         assert!(Cli::try_parse_from(["annex", "up", "--timezone", "UTC;reboot"]).is_err());
         assert!(Cli::try_parse_from(["annex", "setup", "--ci", "--bridge"]).is_err());
+    }
+
+    #[test]
+    fn net_takes_an_optional_instance_and_condition() {
+        for args in [
+            &["annex", "net"][..],
+            &["annex", "net", "offline"],
+            &["annex", "net", "ci", "slow"],
+        ] {
+            assert!(Cli::try_parse_from(args).is_ok(), "{args:?}");
+        }
+        assert!(Cli::try_parse_from(["annex", "net", "ci", "slow", "extra"]).is_err());
     }
 
     #[test]

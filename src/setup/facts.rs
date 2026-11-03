@@ -11,7 +11,7 @@ use crate::adb::Adb;
 use crate::instance::AndroidVersion;
 use crate::paths::{home, which};
 use crate::scrcpy::Scrcpy;
-use crate::{bridge, docker, launcher, update, waydroid};
+use crate::{bridge, docker, launcher, network, update, waydroid};
 
 pub const BINDER_MODULE: &str = "binder_linux";
 pub const BINDER_BOOT_FILE: &str = "/etc/modules-load.d/annex-binder.conf";
@@ -66,6 +66,7 @@ pub fn gather(options: Options) -> Facts {
         is_in_docker_group: is_in_docker_group(),
         is_bridge_installed: bridge::service::state() != "not-installed",
         is_window_mode_ready: waydroid::is_installed() && waydroid::is_initialized(),
+        can_shape_network: network::can_shape(),
         is_manager_published: options.manager && !has_manager && update::is_manager_published(),
         container: container_kind(),
     }

@@ -6,11 +6,12 @@ use std::sync::Mutex;
 use std::time::Instant;
 
 use anyhow::{Result, bail};
-use clap::{CommandFactory, Parser};
+use clap::{CommandFactory, Parser, ValueEnum};
 
 use annex_core::adb::Adb;
 use annex_core::instance::{self, Backend, State, UpOptions};
 use annex_core::location::{self, Fix, Location};
+use annex_core::network::{self, Condition};
 use annex_core::preferences::{self, Preferences};
 use annex_core::{bridge, desktop, doctor, launcher, setup, snapshot, update, window};
 use cli::{BridgeCommand, Cli, Commands, LauncherCommand, SnapCommand};
@@ -354,6 +355,26 @@ fn run(command: Commands) -> Result<ExitCode> {
                     );
                 }
                 println!("your desktop may ask once whether Annex can use your location");
+            }
+        }
+        Commands::Net { args } => {
+            let (name, rest) = instance::split_name(args, 1)?;
+            let (name, wanted) = match &rest[..] {
+                [] => (name, None),
+                [value] => match Condition::from_str(value, true) {
+                    Ok(wanted) => (name, Some(wanted)),
+                    Err(_) if instance::find(value)?.is_some() => (value.clone(), None),
+                    Err(_) => bail!("{value:?} is not online, offline, slow or lossy"),
+                },
+                _ => bail!("give one instance and one condition"),
+            };
+            let instance = instance::require_running(&name)?;
+            match wanted {
+                None => println!("{name}: {}", network::get(&instance)?.describe()),
+                Some(condition) => {
+                    network::set(&instance, condition)?;
+                    report(format!("{name} is now {}", condition.describe()));
+                }
             }
         }
         Commands::Push { args, to } => {

@@ -64,7 +64,7 @@ Open, freeze and reset instances from the desktop. Each piece reuses the one bef
 Run the same instances on CI runners, and give test suites what a real phone gives them.
 
 - [x] A CI profile: `annex up --ephemeral --wait-boot --timezone --locale --animations off`, `annex serial`, `annex ls --json`, `annex doctor --json`, `annex setup --ci`, and container-aware `doctor`/`setup` for LXD runners
-- [ ] Network conditions: `annex net <name> online|offline|slow|lossy`
+- [x] Network conditions: `annex net <name> online|offline|slow|lossy`
 - [ ] A virtual camera that apps see through Camera2, fed from an image or a video
 - [ ] Evidence capture: `annex record` (screen video without a time limit) and `annex logs` (logcat to a file)
 - [ ] A stable device id that survives `annex rm` and recreating an instance, for backends that bind a user to their first device

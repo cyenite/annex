@@ -11,6 +11,8 @@ All notable changes to annex are recorded here. The format follows [Keep a Chang
 - `annex doctor --json` prints the checks as JSON; like `annex doctor`, it exits non-zero when a check fails.
 - `annex setup --ci`: never prompts (sudo must not need a password), skips the desktop bridge and Annex Manager, and fails when a step needs a person.
 - `annex doctor` and `annex setup` notice when they run in a container (such as an LXD CI runner) and say what to do on the host, instead of trying to load kernel modules.
+- `annex net [NAME] online|offline|slow|lossy` changes an instance's network until it restarts. `offline` blocks every installed app through Android's own firewall, so apps are told they have no network; `slow` and `lossy` shape the connection. adb always keeps working.
+- `annex setup` loads the kernel's traffic shaping modules on machines that don't load them on demand, and `annex doctor` checks for them.
 
 ### Changed
 
