@@ -74,7 +74,7 @@ pub fn run() -> Vec<Check> {
         windows(),
         memory(),
         image(),
-        network_conditions(),
+        network_conditions(container),
         window_mode(),
         desktop_clipboard(),
         desktop_notifications(),
@@ -255,13 +255,15 @@ fn image() -> Check {
     }
 }
 
-fn network_conditions() -> Check {
+fn network_conditions(container: Option<&str>) -> Check {
     if network::can_shape() {
         Check::new(
             Level::Ok,
             "network",
             "`annex net` can make instances slow or lossy",
         )
+    } else if let Some(kind) = container {
+        Check::new(Level::Warn, "network", facts::network_host_steps(kind))
     } else {
         Check::new(
             Level::Warn,

@@ -153,7 +153,7 @@ annex down e2e                          # an ephemeral instance is deleted with 
 - `--timezone` sets the time zone and turns automatic time zone off; `--locale` sets the system language (a change restarts Android's framework once, about 15 s); `--animations off` turns window, transition and animator animations off. They are saved on the instance's data, like a change made in Settings.
 - `annex serial [NAME]` prints an instance's adb serial, and `annex ls --json` lists every instance with its serial, state and whether it's ephemeral. Ports are handed out in order, so don't hardcode `127.0.0.1:5600` when other instances may exist.
 - Without a desktop session (SSH, CI), `annex up` opens no window and adds no app launcher entry; ephemeral instances never get one.
-- In a container (`systemd-detect-virt --container`), `annex doctor` and `annex setup` say what to do on the host: the container shares the host's kernel, so the host loads binder (`sudo modprobe binder_linux`, and at boot through /etc/modules-load.d/), and the container must be privileged and nested.
+- In a container (`systemd-detect-virt --container`), `annex doctor` and `annex setup` say what to do on the host: the container shares the host's kernel, so the host loads binder (`sudo modprobe binder_linux`, and at boot through /etc/modules-load.d/), and the container must be privileged and nested. The host also loads the traffic shaping modules if `annex net slow` and `lossy` are needed and its kernel doesn't load them on demand.
 - `setup --ci` needs root or passwordless sudo, and exits non-zero when something is left for a person to do.
 
 ### Network conditions

@@ -103,6 +103,16 @@ pub fn binder_host_steps(kind: &str) -> String {
     )
 }
 
+/// What to do on the host when annex runs in a container and `annex net slow` and `lossy` can't
+/// load their traffic shaping modules.
+pub fn network_host_steps(kind: &str) -> String {
+    format!(
+        "this machine is a {kind} container, so `annex net slow` and `lossy` need traffic shaping modules loaded on its host: there, run `sudo modprobe -a {}` and list them in {}",
+        network::MODULES.join(" "),
+        network::MODULES_BOOT_FILE
+    )
+}
+
 pub fn has_binder() -> bool {
     fs::read_to_string("/proc/filesystems")
         .unwrap_or_default()

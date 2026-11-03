@@ -1,5 +1,5 @@
 use super::distro::{Package, PackageManager};
-use super::facts::binder_host_steps;
+use super::facts::{binder_host_steps, network_host_steps};
 
 /// What setup found on this machine. Gathered once, so the plan is a pure function of it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -207,6 +207,9 @@ pub fn plan(facts: &Facts, options: Options) -> Plan {
         if check(facts.has_binder, "binder loaded (by the host)") {
             steps.push(Step::Manual(binder_host_steps(kind)));
         }
+        if check(facts.can_shape_network, "traffic shaping (by the host)") {
+            steps.push(Step::Manual(network_host_steps(kind)));
+        }
     } else {
         if check(facts.has_binder, "binder loaded") {
             steps.push(Step::LoadBinder);
@@ -217,9 +220,9 @@ pub fn plan(facts: &Facts, options: Options) -> Plan {
         if check(facts.has_image_rule, "Android disk images hidden") {
             steps.push(Step::HideAndroidImages);
         }
-    }
-    if check(facts.can_shape_network, "traffic shaping") {
-        steps.push(Step::LoadNetworkModules);
+        if check(facts.can_shape_network, "traffic shaping") {
+            steps.push(Step::LoadNetworkModules);
+        }
     }
     if options.window_mode && check(facts.is_window_mode_ready, "window mode set up") {
         steps.push(Step::InitWindowMode);
@@ -441,6 +444,14 @@ mod tests {
             ..facts
         };
         assert!(plan(&loaded, Options::default()).steps.is_empty());
+        let unshaped = Facts {
+            can_shape_network: false,
+            ..loaded
+        };
+        let steps = plan(&unshaped, Options::default()).steps;
+        assert!(
+            matches!(&steps[..], [Step::Manual(text)] if text.contains("on its host") && text.contains("sch_netem"))
+        );
     }
 
     #[test]
