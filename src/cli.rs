@@ -1,7 +1,11 @@
+use std::path::PathBuf;
+
 use clap::{Parser, Subcommand};
 use clap_complete::Shell;
 
+use annex_core::capture::Since;
 use annex_core::instance::{AndroidVersion, Mode};
+use annex_core::preferences::{Animations, Locale, TimeZone};
 use annex_core::redroid::Display;
 
 #[derive(Parser)]
@@ -25,12 +29,20 @@ pub struct Cli {
 #[derive(Subcommand)]
 pub enum Commands {
     /// Check that this machine can run Android instances
-    Doctor,
+    Doctor {
+        /// Print the checks as JSON; the exit code is non-zero when any check fails
+        #[arg(long)]
+        json: bool,
+    },
     /// Install and configure everything annex needs, after showing the plan
     Setup {
         /// Don't ask before making changes
         #[arg(long)]
         yes: bool,
+        /// For CI runners: never prompt (sudo must not need a password), no bridge or Annex
+        /// Manager, and fail when a step needs a person
+        #[arg(long, conflicts_with = "bridge")]
+        ci: bool,
         /// Show the plan and change nothing
         #[arg(long)]
         dry_run: bool,
@@ -69,6 +81,22 @@ pub enum Commands {
         /// Don't open the instance's window; it never opens outside a desktop session
         #[arg(long)]
         no_window: bool,
+        /// Delete a new instance and its data at `annex down`, so every run starts clean
+        #[arg(long)]
+        ephemeral: bool,
+        /// Also wait until the package manager answers, so installs work at once
+        #[arg(long)]
+        wait_boot: bool,
+        /// Set the time zone after boot, like Africa/Nairobi (turns automatic time zone off)
+        #[arg(long, value_name = "ZONE")]
+        timezone: Option<TimeZone>,
+        /// Set the system language after boot, like en-KE; a change restarts Android's
+        /// framework once (container mode)
+        #[arg(long, value_name = "TAG")]
+        locale: Option<Locale>,
+        /// Turn window, transition and animator animations on or off
+        #[arg(long, value_enum, value_name = "on|off")]
+        animations: Option<Animations>,
     },
     /// Stop an instance (its data is kept)
     Down {
@@ -86,7 +114,16 @@ pub enum Commands {
         name: Option<String>,
     },
     /// List instances
-    Ls,
+    Ls {
+        /// Print the instances as JSON, with each one's adb serial
+        #[arg(long)]
+        json: bool,
+    },
+    /// Print an instance's adb serial, like 127.0.0.1:5600, for scripts
+    Serial {
+        /// The instance [default: `default`, or the only running instance]
+        name: Option<String>,
+    },
     /// Open a window showing an instance's whole screen
     Show {
         /// The instance [default: `default`, or the only running instance]
@@ -132,6 +169,44 @@ Annex may use it. A computer without GPS often knows its location only roughly."
         /// Google Maps link
         #[arg(value_name = "ARGS", num_args = 0..=2, allow_hyphen_values = true)]
         args: Vec<String>,
+    },
+    /// Show or set an instance's network: online, offline, slow or lossy
+    #[command(
+        override_usage = "annex net [NAME] [online | offline | slow | lossy]",
+        after_help = "With no condition, shows the current one. offline blocks every installed app, and \
+Android tells them they have no network; slow is about 1 Mbit/s each way with 300 ms added latency; \
+lossy drops one packet in ten. adb always keeps working. A condition lasts until the instance \
+restarts; `online` ends it sooner. Container mode only."
+    )]
+    Net {
+        /// An optional instance, then the condition
+        #[arg(value_name = "ARGS", num_args = 0..=2)]
+        args: Vec<String>,
+    },
+    /// Record an instance's screen to a video file, with no time limit
+    #[command(
+        override_usage = "annex record [NAME] start -o <FILE>\n       annex record [NAME] stop",
+        after_help = "For example: annex record e2e start -o run.mp4, then annex record e2e stop. \
+The recording runs in the background, without a window, until `stop`."
+    )]
+    Record {
+        /// An optional instance, then `start` or `stop`
+        #[arg(value_name = "ARGS", num_args = 1..=2, required = true)]
+        args: Vec<String>,
+        /// The video to write, .mp4 or .mkv (for `start`)
+        #[arg(short, long, value_name = "FILE")]
+        output: Option<PathBuf>,
+    },
+    /// Write Android's log (logcat, threadtime format) to a file or the terminal
+    Logs {
+        /// The instance [default: `default`, or the only running instance]
+        name: Option<String>,
+        /// The file to write [default: the terminal]
+        #[arg(short, long, value_name = "FILE")]
+        output: Option<PathBuf>,
+        /// Only the last part, like 30s, 10m or 2h [default: everything Android kept]
+        #[arg(long, value_name = "DURATION")]
+        since: Option<Since>,
     },
     /// Copy files or folders from this machine to an instance
     #[command(override_usage = "annex push [NAME] <PATH>... [--to <FOLDER>]")]
@@ -266,6 +341,68 @@ mod tests {
         };
         assert_eq!(android, Some(AndroidVersion::Android14));
         assert_eq!(display.unwrap().to_string(), "1600x2560/320");
+    }
+
+    #[test]
+    fn parses_the_ci_profile() {
+        let cli = Cli::try_parse_from([
+            "annex",
+            "up",
+            "ci",
+            "--ephemeral",
+            "--wait-boot",
+            "--timezone",
+            "Africa/Nairobi",
+            "--locale",
+            "en-KE",
+            "--animations",
+            "off",
+        ])
+        .unwrap();
+        let Commands::Up {
+            ephemeral,
+            wait_boot,
+            timezone,
+            locale,
+            animations,
+            ..
+        } = cli.command
+        else {
+            panic!("expected up");
+        };
+        assert!(ephemeral && wait_boot);
+        assert_eq!(timezone, "Africa/Nairobi".parse().ok());
+        assert_eq!(locale, "en-KE".parse().ok());
+        assert_eq!(animations, Some(Animations::Off));
+        assert!(Cli::try_parse_from(["annex", "up", "--timezone", "UTC;reboot"]).is_err());
+        assert!(Cli::try_parse_from(["annex", "setup", "--ci", "--bridge"]).is_err());
+    }
+
+    #[test]
+    fn net_takes_an_optional_instance_and_condition() {
+        for args in [
+            &["annex", "net"][..],
+            &["annex", "net", "offline"],
+            &["annex", "net", "ci", "slow"],
+        ] {
+            assert!(Cli::try_parse_from(args).is_ok(), "{args:?}");
+        }
+        assert!(Cli::try_parse_from(["annex", "net", "ci", "slow", "extra"]).is_err());
+    }
+
+    #[test]
+    fn parses_evidence_capture() {
+        let cli =
+            Cli::try_parse_from(["annex", "record", "e2e", "start", "-o", "run.mp4"]).unwrap();
+        let Commands::Record { args, output } = cli.command else {
+            panic!("expected record");
+        };
+        assert_eq!(args, ["e2e", "start"]);
+        assert_eq!(output, Some(PathBuf::from("run.mp4")));
+        let cli = Cli::try_parse_from(["annex", "logs", "e2e", "--since", "10m", "-o", "log.txt"])
+            .unwrap();
+        assert!(matches!(cli.command, Commands::Logs { since: Some(_), .. }));
+        assert!(Cli::try_parse_from(["annex", "logs", "--since", "soon"]).is_err());
     }
 
     #[test]

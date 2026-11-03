@@ -10,7 +10,7 @@ use anyhow::{Context, Result};
 
 use crate::instance::Instance;
 use crate::paths::{config_home, data_home, which};
-use crate::snapshot;
+use crate::{desktop, snapshot};
 
 const ICON: &str = include_str!("../assets/annex.svg");
 /// The Manager's GTK application id, which names its launcher so its window groups under it.
@@ -51,8 +51,13 @@ pub fn remove(name: &str) -> Result<()> {
     Ok(())
 }
 
-/// Adds the launcher entry after `annex up`, warning rather than failing the command.
+/// Adds the launcher entry after `annex up`, warning rather than failing the command. Without a
+/// desktop session (SSH, CI) nobody would see it, and an ephemeral instance is gone at its next
+/// `annex down`, so neither gets one.
 pub fn refresh_or_install(instance: &Instance) {
+    if !wants_entry(desktop::has_session(), instance) {
+        return;
+    }
     if let Err(error) = install(instance) {
         eprintln!(
             "warning: could not add {} to the app launcher: {error:#}",
@@ -71,6 +76,10 @@ pub fn refresh(instance: &Instance) {
             instance.name
         );
     }
+}
+
+fn wants_entry(has_session: bool, instance: &Instance) -> bool {
+    has_session && !instance.is_ephemeral()
 }
 
 fn render(name: &str, executable: &Path, labels: &[String]) -> String {
@@ -275,6 +284,27 @@ mod tests {
     fn entry(labels: &[&str]) -> String {
         let labels: Vec<String> = labels.iter().map(|label| label.to_string()).collect();
         render("pixel", Path::new("/opt/annex/annex"), &labels)
+    }
+
+    #[test]
+    fn only_a_desktop_session_gets_entries_and_never_for_ephemeral_instances() {
+        use crate::instance::{AndroidVersion, Backend, State};
+        use crate::redroid::{Container, Display};
+        let instance = |is_ephemeral| Instance {
+            name: "ci".to_string(),
+            serial: "127.0.0.1:5600".to_string(),
+            state: State::Running,
+            backend: Backend::Redroid(Container {
+                port: 5600,
+                config: "6".to_string(),
+                display: Display::default(),
+                android: AndroidVersion::Android15,
+                is_ephemeral,
+            }),
+        };
+        assert!(wants_entry(true, &instance(false)));
+        assert!(!wants_entry(false, &instance(false)));
+        assert!(!wants_entry(true, &instance(true)));
     }
 
     #[test]

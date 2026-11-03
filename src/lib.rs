@@ -3,6 +3,7 @@
 
 pub mod adb;
 pub mod bridge;
+pub mod capture;
 pub mod desktop;
 pub mod docker;
 pub mod doctor;
@@ -10,7 +11,9 @@ pub mod gpu;
 pub mod instance;
 pub mod launcher;
 pub mod location;
+pub mod network;
 pub mod paths;
+pub mod preferences;
 pub mod process;
 pub mod redroid;
 pub mod scrcpy;

@@ -11,7 +11,7 @@ use crate::adb::Adb;
 use crate::instance::AndroidVersion;
 use crate::paths::{home, which};
 use crate::scrcpy::Scrcpy;
-use crate::{bridge, docker, launcher, update, waydroid};
+use crate::{bridge, docker, launcher, network, update, waydroid};
 
 pub const BINDER_MODULE: &str = "binder_linux";
 pub const BINDER_BOOT_FILE: &str = "/etc/modules-load.d/annex-binder.conf";
@@ -66,8 +66,51 @@ pub fn gather(options: Options) -> Facts {
         is_in_docker_group: is_in_docker_group(),
         is_bridge_installed: bridge::service::state() != "not-installed",
         is_window_mode_ready: waydroid::is_installed() && waydroid::is_initialized(),
+        can_shape_network: network::can_shape(),
         is_manager_published: options.manager && !has_manager && update::is_manager_published(),
+        container: container_kind(),
     }
+}
+
+/// The kind of container annex itself runs in (`lxc`, `docker`, ...), if any. A container shares
+/// the host's kernel, so kernel modules such as binder can only be loaded on the host.
+pub fn container_kind() -> Option<String> {
+    let detected = Command::new("systemd-detect-virt")
+        .arg("--container")
+        .stderr(Stdio::null())
+        .output();
+    if let Ok(output) = detected {
+        return parse_container_kind(
+            output.status.success(),
+            &String::from_utf8_lossy(&output.stdout),
+        );
+    }
+    [("/run/.containerenv", "podman"), ("/.dockerenv", "docker")]
+        .into_iter()
+        .find(|(marker, _)| Path::new(marker).exists())
+        .map(|(_, kind)| kind.to_string())
+}
+
+fn parse_container_kind(is_container: bool, output: &str) -> Option<String> {
+    let kind = output.trim();
+    (is_container && !kind.is_empty() && kind != "none").then(|| kind.to_string())
+}
+
+/// What to do on the host when annex runs in a container whose host hasn't loaded binder.
+pub fn binder_host_steps(kind: &str) -> String {
+    format!(
+        "this machine is a {kind} container, so binder must be loaded on its host: there, run `sudo modprobe {BINDER_MODULE}` and add `{BINDER_MODULE}` to {BINDER_BOOT_FILE}; the container needs to be privileged and nested to use it"
+    )
+}
+
+/// What to do on the host when annex runs in a container and `annex net slow` and `lossy` can't
+/// load their traffic shaping modules.
+pub fn network_host_steps(kind: &str) -> String {
+    format!(
+        "this machine is a {kind} container, so `annex net slow` and `lossy` need traffic shaping modules loaded on its host: there, run `sudo modprobe -a {}` and list them in {}",
+        network::MODULES.join(" "),
+        network::MODULES_BOOT_FILE
+    )
 }
 
 pub fn has_binder() -> bool {
@@ -143,4 +186,17 @@ pub fn adb_key_path() -> Option<PathBuf> {
         .map(PathBuf::from)
         .or_else(|| home().map(|home| home.join(".android")))
         .map(|directory| directory.join("adbkey.pub"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reads_the_container_kind() {
+        assert_eq!(parse_container_kind(true, "lxc\n").as_deref(), Some("lxc"));
+        assert_eq!(parse_container_kind(false, "none\n"), None);
+        assert_eq!(parse_container_kind(true, "none"), None);
+        assert_eq!(parse_container_kind(true, ""), None);
+    }
 }

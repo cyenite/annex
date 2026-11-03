@@ -1,4 +1,5 @@
 use super::distro::{Package, PackageManager};
+use super::facts::{binder_host_steps, network_host_steps};
 
 /// What setup found on this machine. Gathered once, so the plan is a pure function of it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -23,8 +24,12 @@ pub struct Facts {
     pub is_in_docker_group: bool,
     pub is_bridge_installed: bool,
     pub is_window_mode_ready: bool,
+    /// Whether tc can shape traffic for `annex net slow` and `lossy`.
+    pub can_shape_network: bool,
     /// Whether the release matching this version ships the Manager; only looked up when needed.
     pub is_manager_published: bool,
+    /// The kind of container this machine is (`lxc`, `docker`), whose kernel is its host's.
+    pub container: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -43,6 +48,7 @@ pub enum Step {
     LoadBinder,
     LoadBinderAtBoot,
     HideAndroidImages,
+    LoadNetworkModules,
     InitWindowMode,
     RestartWindowMode,
     CreateAdbKey,
@@ -68,6 +74,9 @@ impl Step {
             Self::HideAndroidImages => {
                 "Keep Android's internal disk images out of your dock and file manager".to_string()
             }
+            Self::LoadNetworkModules => {
+                "Load the kernel's traffic shaping modules now and at every boot (`annex net slow` and `lossy`)".to_string()
+            }
             Self::InitWindowMode => "Download and set up window mode's system image".to_string(),
             Self::RestartWindowMode => "Restart window mode's system service".to_string(),
             Self::CreateAdbKey => "Create your adb key".to_string(),
@@ -92,6 +101,7 @@ impl Step {
                 | Self::LoadBinder
                 | Self::LoadBinderAtBoot
                 | Self::HideAndroidImages
+                | Self::LoadNetworkModules
                 | Self::InitWindowMode
                 | Self::RestartWindowMode
         )
@@ -110,6 +120,9 @@ impl Step {
             }
             Self::HideAndroidImages => {
                 "see `udevadm control --reload-rules` for errors, then run `annex setup` again"
+            }
+            Self::LoadNetworkModules => {
+                "your kernel may lack traffic shaping: check `modinfo sch_netem`"
             }
             Self::InitWindowMode => {
                 "the image download can stall on a slow mirror; run `annex setup --window-mode` again to retry"
@@ -189,14 +202,27 @@ pub fn plan(facts: &Facts, options: Options) -> Plan {
     ) {
         steps.push(Step::JoinDockerGroup);
     }
-    if check(facts.has_binder, "binder loaded") {
-        steps.push(Step::LoadBinder);
-    }
-    if check(facts.has_binder_at_boot, "binder at boot") {
-        steps.push(Step::LoadBinderAtBoot);
-    }
-    if check(facts.has_image_rule, "Android disk images hidden") {
-        steps.push(Step::HideAndroidImages);
+    // A container can't load kernel modules or see the host's udev, so the host does both.
+    if let Some(kind) = &facts.container {
+        if check(facts.has_binder, "binder loaded (by the host)") {
+            steps.push(Step::Manual(binder_host_steps(kind)));
+        }
+        if check(facts.can_shape_network, "traffic shaping (by the host)") {
+            steps.push(Step::Manual(network_host_steps(kind)));
+        }
+    } else {
+        if check(facts.has_binder, "binder loaded") {
+            steps.push(Step::LoadBinder);
+        }
+        if check(facts.has_binder_at_boot, "binder at boot") {
+            steps.push(Step::LoadBinderAtBoot);
+        }
+        if check(facts.has_image_rule, "Android disk images hidden") {
+            steps.push(Step::HideAndroidImages);
+        }
+        if check(facts.can_shape_network, "traffic shaping") {
+            steps.push(Step::LoadNetworkModules);
+        }
     }
     if options.window_mode && check(facts.is_window_mode_ready, "window mode set up") {
         steps.push(Step::InitWindowMode);
@@ -265,7 +291,9 @@ mod tests {
             is_in_docker_group: true,
             is_bridge_installed: true,
             is_window_mode_ready: true,
+            can_shape_network: true,
             is_manager_published: true,
+            container: None,
         }
     }
 
@@ -297,6 +325,7 @@ mod tests {
                 Step::LoadBinder,
                 Step::LoadBinderAtBoot,
                 Step::HideAndroidImages,
+                Step::LoadNetworkModules,
                 Step::CreateAdbKey,
                 Step::PullImage,
             ]
@@ -395,6 +424,34 @@ mod tests {
         let steps = plan(&facts, options).steps;
         assert_eq!(steps, [Step::AddManagerEntry]);
         assert!(!steps[0].needs_sudo());
+    }
+
+    #[test]
+    fn a_container_leaves_kernel_modules_and_udev_to_its_host() {
+        let facts = Facts {
+            has_binder: false,
+            has_image_rule: false,
+            has_binder_at_boot: false,
+            container: Some("lxc".to_string()),
+            ..ready()
+        };
+        let steps = plan(&facts, Options::default()).steps;
+        assert!(
+            matches!(&steps[..], [Step::Manual(text)] if text.contains("lxc container") && text.contains("modprobe"))
+        );
+        let loaded = Facts {
+            has_binder: true,
+            ..facts
+        };
+        assert!(plan(&loaded, Options::default()).steps.is_empty());
+        let unshaped = Facts {
+            can_shape_network: false,
+            ..loaded
+        };
+        let steps = plan(&unshaped, Options::default()).steps;
+        assert!(
+            matches!(&steps[..], [Step::Manual(text)] if text.contains("on its host") && text.contains("sch_netem"))
+        );
     }
 
     #[test]

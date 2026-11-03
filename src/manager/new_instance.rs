@@ -160,6 +160,7 @@ impl Request {
             mode: Some(Mode::Container),
             display: Some(display),
             android: Some(self.android),
+            ..UpOptions::default()
         })
     }
 

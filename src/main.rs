@@ -1,17 +1,20 @@
 mod cli;
 
+use std::fs;
 use std::io;
 use std::process::ExitCode;
 use std::sync::Mutex;
 use std::time::Instant;
 
 use anyhow::{Result, bail};
-use clap::{CommandFactory, Parser};
+use clap::{CommandFactory, Parser, ValueEnum};
 
 use annex_core::adb::Adb;
 use annex_core::instance::{self, Backend, State, UpOptions};
 use annex_core::location::{self, Fix, Location};
-use annex_core::{bridge, desktop, doctor, launcher, setup, snapshot, update, window};
+use annex_core::network::{self, Condition};
+use annex_core::preferences::{self, Preferences};
+use annex_core::{bridge, capture, desktop, doctor, launcher, setup, snapshot, update, window};
 use cli::{BridgeCommand, Cli, Commands, LauncherCommand, SnapCommand};
 
 /// Beyond this, the computer's own location is too rough to place an instance at an address.
@@ -74,13 +77,14 @@ fn run(command: Commands) -> Result<ExitCode> {
     let started = Instant::now();
     let elapsed = || format!("{:.1} s", started.elapsed().as_secs_f64());
     match command {
-        Commands::Doctor => {
+        Commands::Doctor { json } => {
             let checks = doctor::run();
-            doctor::print(&checks);
-            let has_failures = checks
-                .iter()
-                .any(|check| check.level == doctor::Level::Fail);
-            return Ok(if has_failures {
+            if json {
+                println!("{}", doctor::to_json(&checks));
+            } else {
+                doctor::print(&checks);
+            }
+            return Ok(if doctor::has_failures(&checks) {
                 ExitCode::FAILURE
             } else {
                 ExitCode::SUCCESS
@@ -88,6 +92,7 @@ fn run(command: Commands) -> Result<ExitCode> {
         }
         Commands::Setup {
             yes,
+            ci,
             dry_run,
             bridge,
             no_bridge,
@@ -95,12 +100,13 @@ fn run(command: Commands) -> Result<ExitCode> {
             window_mode,
             repair,
         } => setup::run(setup::Run {
+            is_ci: ci,
             is_yes: yes,
             is_dry_run: dry_run,
             options: setup::Options {
                 // The bridge belongs to a desktop session; over SSH there is none to start it in.
-                bridge: !no_bridge && (bridge || desktop::has_session()),
-                manager: !no_manager && desktop::has_session(),
+                bridge: !ci && !no_bridge && (bridge || desktop::has_session()),
+                manager: !ci && !no_manager && desktop::has_session(),
                 repair,
                 window_mode,
             },
@@ -149,6 +155,11 @@ fn run(command: Commands) -> Result<ExitCode> {
             android,
             display,
             no_window,
+            ephemeral,
+            wait_boot,
+            timezone,
+            locale,
+            animations,
         } => {
             let adb = Adb::locate()?;
             let name = name.unwrap_or_else(|| instance::DEFAULT_NAME.to_string());
@@ -156,9 +167,22 @@ fn run(command: Commands) -> Result<ExitCode> {
                 mode,
                 display,
                 android,
+                is_ephemeral: ephemeral,
+            };
+            let preferences = Preferences {
+                locale,
+                timezone,
+                animations,
             };
             let instance = instance::up(&adb, &name, options)?;
             launcher::refresh_or_install(&instance);
+            if wait_boot || !preferences.is_empty() {
+                instance::wait_until_ready(&adb, &instance)?;
+            }
+            let applied = preferences::apply(&adb, &instance, &preferences)?;
+            if !applied.is_empty() {
+                println!("set {}", applied.join(", "));
+            }
             report(format!(
                 "{name} ready at {} (Android {}) in {}",
                 instance.serial,
@@ -176,8 +200,17 @@ fn run(command: Commands) -> Result<ExitCode> {
         }
         Commands::Down { name } => {
             let name = instance::resolve(name)?;
+            let is_ephemeral = instance::require(&name)?.is_ephemeral();
             instance::down(&Adb::locate()?, &name)?;
-            report(format!("{name} stopped in {}", elapsed()));
+            if is_ephemeral {
+                launcher::remove(&name)?;
+                report(format!(
+                    "{name} stopped and removed with its data (ephemeral) in {}",
+                    elapsed()
+                ));
+            } else {
+                report(format!("{name} stopped in {}", elapsed()));
+            }
         }
         Commands::Freeze { name } => {
             let name = instance::resolve(name)?;
@@ -189,7 +222,16 @@ fn run(command: Commands) -> Result<ExitCode> {
             instance::thaw(&Adb::locate()?, &name)?;
             report(format!("{name} thawed in {}", elapsed()));
         }
-        Commands::Ls => list()?,
+        Commands::Ls { json } => {
+            if json {
+                println!("{}", list_json()?);
+            } else {
+                list()?;
+            }
+        }
+        Commands::Serial { name } => {
+            println!("{}", instance::require(&instance::resolve(name)?)?.serial);
+        }
         Commands::OpenWindow { name } => {
             let name = instance::resolve(name)?;
             let adb = Adb::locate()?;
@@ -316,6 +358,67 @@ fn run(command: Commands) -> Result<ExitCode> {
                 println!("your desktop may ask once whether Annex can use your location");
             }
         }
+        Commands::Net { args } => {
+            let (name, rest) = instance::split_name(args, 1)?;
+            let (name, wanted) = match &rest[..] {
+                [] => (name, None),
+                [value] => match Condition::from_str(value, true) {
+                    Ok(wanted) => (name, Some(wanted)),
+                    Err(_) if instance::find(value)?.is_some() => (value.clone(), None),
+                    Err(_) => bail!("{value:?} is not online, offline, slow or lossy"),
+                },
+                _ => bail!("give one instance and one condition"),
+            };
+            let instance = instance::require_running(&name)?;
+            match wanted {
+                None => println!("{name}: {}", network::get(&instance)?.describe()),
+                Some(condition) => {
+                    network::set(&instance, condition)?;
+                    report(format!("{name} is now {}", condition.describe()));
+                }
+            }
+        }
+        Commands::Record { args, output } => {
+            let (name, rest) = instance::split_name(args, 1)?;
+            let instance = instance::require_running(&name)?;
+            match (&rest[..], output) {
+                ([action], Some(output)) if action == "start" => {
+                    let path = capture::start_recording(&Adb::locate()?, &instance, &output)?;
+                    report(format!(
+                        "recording {name} to {}: `annex record {name} stop` finishes it",
+                        path.display()
+                    ));
+                }
+                ([action], None) if action == "start" => {
+                    bail!("give the video to write: `annex record {name} start -o run.mp4`")
+                }
+                ([action], None) if action == "stop" => {
+                    let path = capture::stop_recording(&instance)?;
+                    let megabytes = fs::metadata(&path)
+                        .map_or(0.0, |metadata| metadata.len() as f64 / 1_048_576.0);
+                    report(format!(
+                        "saved {name}'s recording to {} ({megabytes:.1} MB)",
+                        path.display()
+                    ));
+                }
+                ([action], Some(_)) if action == "stop" => {
+                    bail!("`stop` writes to the file given at `start`; leave out -o")
+                }
+                _ => bail!("give `start -o FILE` or `stop`"),
+            }
+        }
+        Commands::Logs {
+            name,
+            output,
+            since,
+        } => {
+            let name = instance::resolve(name)?;
+            let instance = instance::require_running(&name)?;
+            capture::write_logs(&Adb::locate()?, &instance, since, output.as_deref())?;
+            if let Some(output) = output {
+                eprintln!("wrote {name}'s log to {}", output.display());
+            }
+        }
         Commands::Push { args, to } => {
             let (name, paths) = instance::split_name(args, 1)?;
             if paths.is_empty() {
@@ -424,6 +527,28 @@ fn list() -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// `annex ls --json`, for scripts that need an instance's adb serial: ports are handed out in
+/// order, so a CI runner with another instance gets a different one.
+fn list_json() -> Result<String> {
+    let mut entries = Vec::new();
+    for instance in instance::list()? {
+        let snapshots = match instance.backend {
+            Backend::Redroid(_) => Some(snapshot::list(&instance.name)?.len()),
+            Backend::Waydroid { .. } => None,
+        };
+        entries.push(serde_json::json!({
+            "name": instance.name,
+            "state": instance.state.label(),
+            "mode": instance.backend.mode().label(),
+            "android": instance.android(),
+            "serial": instance.serial,
+            "ephemeral": instance.is_ephemeral(),
+            "snapshots": snapshots,
+        }));
+    }
+    Ok(serde_json::to_string_pretty(&entries)?)
 }
 
 fn plural(count: usize, noun: &str) -> String {

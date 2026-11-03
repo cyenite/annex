@@ -135,6 +135,54 @@ To pin an exact spot, right-click it in Google Maps and click its coordinates to
 
 `host` is opt-in per instance and needs the desktop bridge and your desktop's Location Services; GNOME asks once whether Annex may use your location. A computer without GPS finds itself by looking up nearby Wi-Fi networks, and where the lookup service doesn't know them it guesses from the IP address, which can be tens of kilometers off. `annex location` shows how close the computer's position is; for anything that depends on being at an address, pin the spot instead. The position is only shared with instances you set to `host` from this computer; that choice is kept here, not in the instance, and `annex rm` withdraws it.
 
+### CI and scripts
+
+annex runs on CI runners and headless machines, including inside a privileged LXD container. A typical end-to-end job:
+
+```sh
+annex setup --ci                        # never prompts; no bridge, no Annex Manager
+annex doctor --json                     # every check as JSON; exits non-zero when one fails
+annex up e2e --ephemeral --wait-boot --timezone Africa/Nairobi --locale en-KE --animations off
+serial=$(annex serial e2e)              # 127.0.0.1:5600, or the next free port
+flutter test integration_test -d "$serial"
+annex down e2e                          # an ephemeral instance is deleted with its data
+```
+
+- `--ephemeral` deletes a new instance and its data volume at `annex down`, so every run starts from first boot. Without it, `down` keeps the instance and its data, including its device id: apps and servers that remember the device see the same one next time.
+- `--wait-boot` also waits until the package manager answers, so `adb install` works at once.
+- `--timezone` sets the time zone and turns automatic time zone off; `--locale` sets the system language (a change restarts Android's framework once, about 15 s); `--animations off` turns window, transition and animator animations off. They are saved on the instance's data, like a change made in Settings.
+- `annex serial [NAME]` prints an instance's adb serial, and `annex ls --json` lists every instance with its serial, state and whether it's ephemeral. Ports are handed out in order, so don't hardcode `127.0.0.1:5600` when other instances may exist.
+- Without a desktop session (SSH, CI), `annex up` opens no window and adds no app launcher entry; ephemeral instances never get one.
+- In a container (`systemd-detect-virt --container`), `annex doctor` and `annex setup` say what to do on the host: the container shares the host's kernel, so the host loads binder (`sudo modprobe binder_linux`, and at boot through /etc/modules-load.d/), and the container must be privileged and nested. The host also loads the traffic shaping modules if `annex net slow` and `lossy` are needed and its kernel doesn't load them on demand.
+- `setup --ci` needs root or passwordless sudo, and exits non-zero when something is left for a person to do.
+
+### Network conditions
+
+Test how an app behaves offline or on a poor connection:
+
+```sh
+annex net offline                       # every installed app loses its network
+annex net slow                          # about 1 Mbit/s each way, 300 ms added latency
+annex net lossy                         # one packet in ten lost, 50 ms added latency
+annex net                               # show the current condition
+annex net online                        # back to normal
+```
+
+`offline` blocks every installed app through Android's own firewall, so Android tells the apps they have no network, as a phone with no signal would; apps installed afterwards aren't blocked until you run `annex net offline` again. `slow` and `lossy` shape the instance's network connection. adb is never affected, so IDEs and test runners stay connected. A condition lasts until the instance restarts. `slow` and `lossy` need the kernel's traffic shaping modules, which most kernels load on demand; `annex setup` loads them where they don't. Container mode only.
+
+### Recordings and logs
+
+Keep evidence of a test run:
+
+```sh
+annex record e2e start -o run.mp4       # record the screen in the background, no window
+annex record e2e stop                   # finish the video
+annex logs e2e -o logcat.txt            # Android's log, logcat's threadtime format
+annex logs e2e --since 10m              # only the last 10 minutes, to the terminal
+```
+
+A recording has no time limit (Android's own screen recorder stops at 3 minutes) and needs no desktop session, so it works on CI runners; `stop` works from any shell or a later CI step. Android keeps only its most recent log, so for a long run, save it before the instance stops.
+
 ## On your desktop
 
 ### Annex Manager
@@ -206,6 +254,7 @@ Anyone in the `docker` group can still open a shell in an instance, as with any 
 | Symptom | Fix |
 |---|---|
 | `annex up` fails at once | Run `annex doctor`, then `annex setup` to fix what it reports. |
+| `annex doctor` in a container says binder must be loaded on its host | Load it on the host (`sudo modprobe binder_linux`, and list `binder_linux` in /etc/modules-load.d/), and make the container privileged and nested. |
 | The device shows up twice in adb | Something published adb on 5555-5585. annex uses 5600 and up; remove the other mapping. |
 | Android Studio loses its devices | Two adb versions on one machine kill each other's server. Point Studio and your PATH at the SDK's adb. |
 | A Flutter debug build crashes on launch | The APK was built for a phone (arm64). Let `flutter run` build for the instance, which is x86_64. |

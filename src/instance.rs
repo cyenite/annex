@@ -1,9 +1,16 @@
+use std::thread::sleep;
+use std::time::{Duration, Instant};
+
 use anyhow::{Context, Result, bail};
 use clap::ValueEnum;
 
 use crate::adb::Adb;
 use crate::redroid::{self, Container, Display};
 use crate::{location, waydroid};
+
+const READY_PROBE: &str = "getprop sys.boot_completed; pm path android";
+const READY_TIMEOUT: Duration = Duration::from_secs(120);
+const READY_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 pub enum AndroidVersion {
@@ -111,6 +118,10 @@ impl Instance {
         }
     }
 
+    pub fn is_ephemeral(&self) -> bool {
+        matches!(&self.backend, Backend::Redroid(container) if container.is_ephemeral)
+    }
+
     /// The container behind this instance, for operations window mode can't offer.
     pub fn container(&self, operation: &str) -> Result<&Container> {
         match &self.backend {
@@ -127,6 +138,7 @@ pub struct UpOptions {
     pub mode: Option<Mode>,
     pub display: Option<Display>,
     pub android: Option<AndroidVersion>,
+    pub is_ephemeral: bool,
 }
 
 pub fn validate_name(name: &str) -> Result<()> {
@@ -186,6 +198,11 @@ pub fn up(adb: &Adb, name: &str, options: UpOptions) -> Result<Instance> {
                     "--android and --display apply to container mode; window mode's Android and screen come from its system image"
                 );
             }
+            if options.is_ephemeral {
+                bail!(
+                    "--ephemeral works in container mode only: window mode keeps its data in a system install"
+                );
+            }
             waydroid::up(adb, name)
         }
     }
@@ -195,9 +212,45 @@ pub fn down(adb: &Adb, name: &str) -> Result<()> {
     let instance = require(name)?;
     adb.disconnect(&instance.serial);
     match &instance.backend {
-        Backend::Redroid(_) => redroid::down(&instance),
+        Backend::Redroid(_) => {
+            redroid::down(&instance)?;
+            if instance.is_ephemeral() {
+                location::forget(name)?;
+            }
+            Ok(())
+        }
         Backend::Waydroid { .. } => waydroid::down(),
     }
+}
+
+/// Waits until Android answers package manager calls, which lags `sys.boot_completed` by a few
+/// seconds; until then `adb install` and `pm` fail with "Can't find service: package".
+pub fn wait_until_ready(adb: &Adb, instance: &Instance) -> Result<()> {
+    let started = Instant::now();
+    loop {
+        let is_ready = adb
+            .shell(&instance.serial, READY_PROBE, READY_PROBE_TIMEOUT)
+            .is_ok_and(|output| is_ready_output(&output));
+        if is_ready {
+            return Ok(());
+        }
+        if started.elapsed() > READY_TIMEOUT {
+            bail!(
+                "{} booted, but its package manager didn't answer within {} s",
+                instance.name,
+                READY_TIMEOUT.as_secs()
+            );
+        }
+        sleep(Duration::from_millis(250));
+    }
+}
+
+fn is_ready_output(output: &str) -> bool {
+    let mut lines = output.lines().map(str::trim);
+    lines.next() == Some("1")
+        && lines
+            .next()
+            .is_some_and(|line| line.starts_with("package:"))
 }
 
 pub fn freeze(name: &str) -> Result<()> {
@@ -334,6 +387,18 @@ mod tests {
         assert!(!is_leading_name(&args(&["other", "app.apk"]), 1, &names));
         assert!(is_leading_name(&args(&["pixel", "/sdcard/a"]), 1, &names));
         assert!(!is_leading_name(&args(&["/sdcard/a", "out"]), 1, &names));
+    }
+
+    #[test]
+    fn ready_needs_boot_completed_and_the_package_manager() {
+        assert!(is_ready_output(
+            "1\npackage:/system/framework/framework-res.apk"
+        ));
+        assert!(!is_ready_output("1\ncmd: Can't find service: package"));
+        assert!(!is_ready_output(
+            "\npackage:/system/framework/framework-res.apk"
+        ));
+        assert!(!is_ready_output(""));
     }
 
     #[test]

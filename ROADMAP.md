@@ -59,6 +59,16 @@ Open, freeze and reset instances from the desktop. Each piece reuses the one bef
 - [x] Panel menu in the desktop bridge: every instance with its state, Show, Freeze or Thaw, Snapshot now, Reset to, Stop, and New instance
 - [x] Annex Manager: a GTK 4 / libadwaita window app with instance cards, a detail page with snapshots and display settings, a New instance dialog, drag-and-drop APK install, and bridge settings. The core is a library target (`annex_core`) shared by the CLI and a second binary, `annex-manager`, built behind a `manager` feature so the CLI never needs GTK; `annex setup` installs it from the release
 
+## Phase 5: CI and end-to-end tests
+
+Run the same instances on CI runners, and give test suites what a real phone gives them.
+
+- [x] A CI profile: `annex up --ephemeral --wait-boot --timezone --locale --animations off`, `annex serial`, `annex ls --json`, `annex doctor --json`, `annex setup --ci`, and container-aware `doctor`/`setup` for LXD runners
+- [x] Network conditions: `annex net <name> online|offline|slow|lossy`
+- [ ] A virtual camera that apps see through Camera2, fed from an image or a video
+- [x] Evidence capture: `annex record` (screen video without a time limit) and `annex logs` (logcat to a file)
+- [ ] A stable device id that survives `annex rm` and recreating an instance, for backends that bind a user to their first device
+
 ## Next
 
 - [ ] Android 16 (API 36+). Its system_server needs `/dev/ashmem`, which mainline kernels no longer have, so Redroid 16 does not boot. Needs a memfd patch to the image.

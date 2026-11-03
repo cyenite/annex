@@ -1,5 +1,5 @@
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::thread::sleep;
 use std::time::Duration;
@@ -79,6 +79,27 @@ impl Scrcpy {
             bail!(
                 "the window closed as it opened ({status}); details:\n{}",
                 log_tail(&log, 8)
+            );
+        }
+        Ok(())
+    }
+
+    /// Records the instance's screen to `path` with no window and no time limit, until the
+    /// process gets SIGINT, on which it finishes the file.
+    pub fn record(&self, adb: &Adb, serial: &str, path: &Path, log: &Path) -> Result<()> {
+        let mut child = spawn_detached(
+            Command::new(&self.path)
+                .arg(format!("--serial={serial}"))
+                .arg(format!("--record={}", path.display()))
+                .args(["--no-window", "--no-control", "--no-audio"])
+                .env("ADB", adb.path()),
+            log,
+        )?;
+        sleep(STARTUP);
+        if let Some(status) = child.try_wait()? {
+            bail!(
+                "the recording stopped as it started ({status}); details:\n{}",
+                log_tail(log, 8)
             );
         }
         Ok(())
