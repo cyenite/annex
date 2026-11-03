@@ -4,6 +4,8 @@ All notable changes to annex are recorded here. The format follows [Keep a Chang
 
 ## Unreleased
 
+## 0.6.0 - 2026-11-03
+
 ### Added
 
 - A CI profile for end-to-end tests on runners and headless machines. `annex up --ephemeral` deletes the instance and its data at `annex down`; `--wait-boot` also waits for the package manager; `--timezone`, `--locale` and `--animations off` set the instance up after boot.
