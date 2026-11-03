@@ -10,6 +10,7 @@ pub mod gpu;
 pub mod instance;
 pub mod launcher;
 pub mod location;
+pub mod network;
 pub mod paths;
 pub mod process;
 pub mod redroid;

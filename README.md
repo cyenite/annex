@@ -135,6 +135,20 @@ To pin an exact spot, right-click it in Google Maps and click its coordinates to
 
 `host` is opt-in per instance and needs the desktop bridge and your desktop's Location Services; GNOME asks once whether Annex may use your location. A computer without GPS finds itself by looking up nearby Wi-Fi networks, and where the lookup service doesn't know them it guesses from the IP address, which can be tens of kilometers off. `annex location` shows how close the computer's position is; for anything that depends on being at an address, pin the spot instead. The position is only shared with instances you set to `host` from this computer; that choice is kept here, not in the instance, and `annex rm` withdraws it.
 
+### Network conditions
+
+Test how an app behaves offline or on a poor connection:
+
+```sh
+annex net offline                       # every installed app loses its network
+annex net slow                          # about 1 Mbit/s each way, 300 ms added latency
+annex net lossy                         # one packet in ten lost, 50 ms added latency
+annex net                               # show the current condition
+annex net online                        # back to normal
+```
+
+`offline` blocks every installed app through Android's own firewall, so Android tells the apps they have no network, as a phone with no signal would; apps installed afterwards aren't blocked until you run `annex net offline` again. `slow` and `lossy` shape the instance's network connection. adb is never affected, so IDEs and test runners stay connected. A condition lasts until the instance restarts. `slow` and `lossy` need the kernel's traffic shaping modules, which most kernels load on demand; `annex setup` loads them where they don't. Container mode only.
+
 ## On your desktop
 
 ### Annex Manager

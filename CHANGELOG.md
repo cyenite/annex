@@ -4,6 +4,11 @@ All notable changes to annex are recorded here. The format follows [Keep a Chang
 
 ## Unreleased
 
+### Added
+
+- `annex net [NAME] online|offline|slow|lossy` changes an instance's network until it restarts. `offline` blocks every installed app through Android's own firewall, so apps are told they have no network; `slow` and `lossy` shape the connection. adb always keeps working.
+- `annex setup` loads the kernel's traffic shaping modules on machines that don't load them on demand, and `annex doctor` checks for them.
+
 ## 0.5.1 - 2026-10-30
 
 ### Fixed

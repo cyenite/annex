@@ -7,7 +7,7 @@ use crate::instance::AndroidVersion;
 use crate::paths::which;
 use crate::scrcpy::Scrcpy;
 use crate::setup::facts;
-use crate::{docker, gpu, waydroid};
+use crate::{docker, gpu, network, waydroid};
 
 const LOW_MEMORY_KIB: u64 = 2 * 1024 * 1024;
 
@@ -67,6 +67,7 @@ pub fn run() -> Vec<Check> {
         windows(),
         memory(),
         image(),
+        network_conditions(),
         window_mode(),
         desktop_clipboard(),
         desktop_notifications(),
@@ -212,6 +213,22 @@ fn image() -> Check {
             Level::Warn,
             "image",
             "Android 15 missing: `annex setup` or the first `annex up` downloads about 3 GB",
+        )
+    }
+}
+
+fn network_conditions() -> Check {
+    if network::can_shape() {
+        Check::new(
+            Level::Ok,
+            "network",
+            "`annex net` can make instances slow or lossy",
+        )
+    } else {
+        Check::new(
+            Level::Warn,
+            "network",
+            "traffic shaping modules aren't loaded, so `annex net slow` and `lossy` fail: run `annex setup`",
         )
     }
 }

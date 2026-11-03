@@ -19,7 +19,7 @@ use anyhow::{Result, bail};
 use crate::adb::Adb;
 use crate::instance::AndroidVersion;
 use crate::process::output_within;
-use crate::{bridge, launcher, update};
+use crate::{bridge, launcher, network, update};
 pub use plan::Options;
 use plan::{Facts, Step, plan};
 use pull::PullError;
@@ -274,6 +274,23 @@ impl Context {
                         "trigger",
                         "--subsystem-match=block",
                         "--action=change",
+                    ]),
+                )
+            }
+            Step::LoadNetworkModules => {
+                let mut command = vec!["modprobe", "-a"];
+                command.extend(network::MODULES);
+                self.root(step, &args(&command))?;
+                let list = format!("{}\n", network::MODULES.join("\n"));
+                self.root(
+                    step,
+                    &args(&[
+                        "sh",
+                        "-c",
+                        "printf '%s' \"$1\" > \"$2\"",
+                        "sh",
+                        &list,
+                        network::MODULES_BOOT_FILE,
                     ]),
                 )
             }
