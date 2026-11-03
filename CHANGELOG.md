@@ -4,6 +4,18 @@ All notable changes to annex are recorded here. The format follows [Keep a Chang
 
 ## Unreleased
 
+### Added
+
+- A CI profile for end-to-end tests on runners and headless machines. `annex up --ephemeral` deletes the instance and its data at `annex down`; `--wait-boot` also waits for the package manager; `--timezone`, `--locale` and `--animations off` set the instance up after boot.
+- `annex serial [NAME]` prints an instance's adb serial, and `annex ls --json` lists instances as JSON, so scripts no longer have to assume `127.0.0.1:5600`.
+- `annex doctor --json` prints the checks as JSON; like `annex doctor`, it exits non-zero when a check fails.
+- `annex setup --ci`: never prompts (sudo must not need a password), skips the desktop bridge and Annex Manager, and fails when a step needs a person.
+- `annex doctor` and `annex setup` notice when they run in a container (such as an LXD CI runner) and say what to do on the host, instead of trying to load kernel modules.
+
+### Changed
+
+- Without a desktop session, `annex up` no longer adds an app launcher entry, and `annex doctor` no longer warns about the clipboard, notifications and panel menu.
+
 ## 0.5.1 - 2026-10-30
 
 ### Fixed

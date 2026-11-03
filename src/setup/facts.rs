@@ -67,7 +67,39 @@ pub fn gather(options: Options) -> Facts {
         is_bridge_installed: bridge::service::state() != "not-installed",
         is_window_mode_ready: waydroid::is_installed() && waydroid::is_initialized(),
         is_manager_published: options.manager && !has_manager && update::is_manager_published(),
+        container: container_kind(),
     }
+}
+
+/// The kind of container annex itself runs in (`lxc`, `docker`, ...), if any. A container shares
+/// the host's kernel, so kernel modules such as binder can only be loaded on the host.
+pub fn container_kind() -> Option<String> {
+    let detected = Command::new("systemd-detect-virt")
+        .arg("--container")
+        .stderr(Stdio::null())
+        .output();
+    if let Ok(output) = detected {
+        return parse_container_kind(
+            output.status.success(),
+            &String::from_utf8_lossy(&output.stdout),
+        );
+    }
+    [("/run/.containerenv", "podman"), ("/.dockerenv", "docker")]
+        .into_iter()
+        .find(|(marker, _)| Path::new(marker).exists())
+        .map(|(_, kind)| kind.to_string())
+}
+
+fn parse_container_kind(is_container: bool, output: &str) -> Option<String> {
+    let kind = output.trim();
+    (is_container && !kind.is_empty() && kind != "none").then(|| kind.to_string())
+}
+
+/// What to do on the host when annex runs in a container whose host hasn't loaded binder.
+pub fn binder_host_steps(kind: &str) -> String {
+    format!(
+        "this machine is a {kind} container, so binder must be loaded on its host: there, run `sudo modprobe {BINDER_MODULE}` and add `{BINDER_MODULE}` to {BINDER_BOOT_FILE}; the container needs to be privileged and nested to use it"
+    )
 }
 
 pub fn has_binder() -> bool {
@@ -143,4 +175,17 @@ pub fn adb_key_path() -> Option<PathBuf> {
         .map(PathBuf::from)
         .or_else(|| home().map(|home| home.join(".android")))
         .map(|directory| directory.join("adbkey.pub"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reads_the_container_kind() {
+        assert_eq!(parse_container_kind(true, "lxc\n").as_deref(), Some("lxc"));
+        assert_eq!(parse_container_kind(false, "none\n"), None);
+        assert_eq!(parse_container_kind(true, "none"), None);
+        assert_eq!(parse_container_kind(true, ""), None);
+    }
 }

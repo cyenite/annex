@@ -30,6 +30,7 @@ const ROOT_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 
 #[derive(Clone, Copy, Default)]
 pub struct Run {
+    pub is_ci: bool,
     pub is_yes: bool,
     pub is_dry_run: bool,
     pub options: Options,
@@ -55,13 +56,13 @@ pub fn run(run: Run) -> Result<()> {
         ui.note("Dry run: nothing was changed.");
         return Ok(());
     }
-    if !run.is_yes && !confirm()? {
+    if !run.is_yes && !run.is_ci && !confirm()? {
         bail!("setup cancelled; nothing was changed");
     }
 
     let is_root = is_root();
     let _keepalive = if plan.needs_sudo() && !is_root {
-        Some(Sudo::start()?)
+        Some(Sudo::start(!run.is_ci)?)
     } else {
         None
     };
@@ -99,6 +100,10 @@ pub fn run(run: Run) -> Result<()> {
         }
     }
     print_next_steps(&ui, context.added_group, run.options);
+    // A CI job can't do the manual steps, so it must stop here rather than fail later in `up`.
+    if run.is_ci && !needs_you.is_empty() {
+        bail!("setup --ci: this machine still needs the steps above");
+    }
     Ok(())
 }
 
@@ -175,11 +180,21 @@ struct Sudo {
 }
 
 impl Sudo {
-    fn start() -> Result<Self> {
+    /// Without `can_ask`, sudo must already allow this user without a password, as on CI runners.
+    fn start(can_ask: bool) -> Result<Self> {
         println!();
-        let status = Command::new("sudo")
-            .args(["-v", "-p", "annex setup needs your password for sudo: "])
-            .status()?;
+        let status = if can_ask {
+            Command::new("sudo")
+                .args(["-v", "-p", "annex setup needs your password for sudo: "])
+                .status()?
+        } else {
+            Command::new("sudo").args(["-n", "-v"]).status()?
+        };
+        if !status.success() && !can_ask {
+            bail!(
+                "setup --ci never asks for a password: run it as root or give this user passwordless sudo; nothing was changed"
+            );
+        }
         if !status.success() {
             bail!("sudo didn't grant access; nothing was changed");
         }

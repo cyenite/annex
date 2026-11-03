@@ -2,6 +2,7 @@ use clap::{Parser, Subcommand};
 use clap_complete::Shell;
 
 use annex_core::instance::{AndroidVersion, Mode};
+use annex_core::preferences::{Animations, Locale, TimeZone};
 use annex_core::redroid::Display;
 
 #[derive(Parser)]
@@ -25,12 +26,20 @@ pub struct Cli {
 #[derive(Subcommand)]
 pub enum Commands {
     /// Check that this machine can run Android instances
-    Doctor,
+    Doctor {
+        /// Print the checks as JSON; the exit code is non-zero when any check fails
+        #[arg(long)]
+        json: bool,
+    },
     /// Install and configure everything annex needs, after showing the plan
     Setup {
         /// Don't ask before making changes
         #[arg(long)]
         yes: bool,
+        /// For CI runners: never prompt (sudo must not need a password), no bridge or Annex
+        /// Manager, and fail when a step needs a person
+        #[arg(long, conflicts_with = "bridge")]
+        ci: bool,
         /// Show the plan and change nothing
         #[arg(long)]
         dry_run: bool,
@@ -69,6 +78,22 @@ pub enum Commands {
         /// Don't open the instance's window; it never opens outside a desktop session
         #[arg(long)]
         no_window: bool,
+        /// Delete a new instance and its data at `annex down`, so every run starts clean
+        #[arg(long)]
+        ephemeral: bool,
+        /// Also wait until the package manager answers, so installs work at once
+        #[arg(long)]
+        wait_boot: bool,
+        /// Set the time zone after boot, like Africa/Nairobi (turns automatic time zone off)
+        #[arg(long, value_name = "ZONE")]
+        timezone: Option<TimeZone>,
+        /// Set the system language after boot, like en-KE; a change restarts Android's
+        /// framework once (container mode)
+        #[arg(long, value_name = "TAG")]
+        locale: Option<Locale>,
+        /// Turn window, transition and animator animations on or off
+        #[arg(long, value_enum, value_name = "on|off")]
+        animations: Option<Animations>,
     },
     /// Stop an instance (its data is kept)
     Down {
@@ -86,7 +111,16 @@ pub enum Commands {
         name: Option<String>,
     },
     /// List instances
-    Ls,
+    Ls {
+        /// Print the instances as JSON, with each one's adb serial
+        #[arg(long)]
+        json: bool,
+    },
+    /// Print an instance's adb serial, like 127.0.0.1:5600, for scripts
+    Serial {
+        /// The instance [default: `default`, or the only running instance]
+        name: Option<String>,
+    },
     /// Open a window showing an instance's whole screen
     Show {
         /// The instance [default: `default`, or the only running instance]
@@ -266,6 +300,41 @@ mod tests {
         };
         assert_eq!(android, Some(AndroidVersion::Android14));
         assert_eq!(display.unwrap().to_string(), "1600x2560/320");
+    }
+
+    #[test]
+    fn parses_the_ci_profile() {
+        let cli = Cli::try_parse_from([
+            "annex",
+            "up",
+            "ci",
+            "--ephemeral",
+            "--wait-boot",
+            "--timezone",
+            "Africa/Nairobi",
+            "--locale",
+            "en-KE",
+            "--animations",
+            "off",
+        ])
+        .unwrap();
+        let Commands::Up {
+            ephemeral,
+            wait_boot,
+            timezone,
+            locale,
+            animations,
+            ..
+        } = cli.command
+        else {
+            panic!("expected up");
+        };
+        assert!(ephemeral && wait_boot);
+        assert_eq!(timezone, "Africa/Nairobi".parse().ok());
+        assert_eq!(locale, "en-KE".parse().ok());
+        assert_eq!(animations, Some(Animations::Off));
+        assert!(Cli::try_parse_from(["annex", "up", "--timezone", "UTC;reboot"]).is_err());
+        assert!(Cli::try_parse_from(["annex", "setup", "--ci", "--bridge"]).is_err());
     }
 
     #[test]

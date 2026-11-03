@@ -2,16 +2,19 @@ use std::env;
 use std::fs;
 use std::path::Path;
 
+use serde::Serialize;
+
 use crate::adb::Adb;
 use crate::instance::AndroidVersion;
 use crate::paths::which;
 use crate::scrcpy::Scrcpy;
 use crate::setup::facts;
-use crate::{docker, gpu, waydroid};
+use crate::{desktop, docker, gpu, waydroid};
 
 const LOW_MEMORY_KIB: u64 = 2 * 1024 * 1024;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Level {
     Ok,
     Warn,
@@ -38,6 +41,7 @@ impl Level {
     }
 }
 
+#[derive(Debug, Serialize)]
 pub struct Check {
     pub level: Level,
     pub name: &'static str,
@@ -55,10 +59,13 @@ impl Check {
 }
 
 pub fn run() -> Vec<Check> {
+    let container = facts::container_kind();
+    let container = container.as_deref();
     vec![
         kernel(),
-        binder(),
-        binder_on_boot(),
+        host(container),
+        binder(container),
+        binder_on_boot(container),
         shared_memory(),
         docker_access(),
         graphics(),
@@ -71,8 +78,21 @@ pub fn run() -> Vec<Check> {
         desktop_clipboard(),
         desktop_notifications(),
         panel_menu(),
-        disk_images(),
+        disk_images(container),
     ]
+}
+
+pub fn has_failures(checks: &[Check]) -> bool {
+    checks.iter().any(|check| check.level == Level::Fail)
+}
+
+/// `annex doctor --json`: every check, and whether any failed, for CI to read.
+pub fn to_json(checks: &[Check]) -> String {
+    let report = serde_json::json!({
+        "ok": !has_failures(checks),
+        "checks": checks,
+    });
+    serde_json::to_string_pretty(&report).expect("doctor checks serialize")
 }
 
 pub fn print(checks: &[Check]) {
@@ -91,15 +111,33 @@ fn kernel() -> Check {
     Check::new(Level::Ok, "kernel", release.trim())
 }
 
-fn binder() -> Check {
-    if facts::has_binder() {
-        Check::new(Level::Ok, "binder", "binderfs available")
-    } else {
-        Check::new(Level::Fail, "binder", "not loaded: run `annex setup`")
+fn host(container: Option<&str>) -> Check {
+    match container {
+        Some(kind) => Check::new(
+            Level::Ok,
+            "host",
+            format!("{kind} container: kernel modules are loaded by its host"),
+        ),
+        None => Check::new(Level::Ok, "host", "not a container"),
     }
 }
 
-fn binder_on_boot() -> Check {
+fn binder(container: Option<&str>) -> Check {
+    match (facts::has_binder(), container) {
+        (true, _) => Check::new(Level::Ok, "binder", "binderfs available"),
+        (false, Some(kind)) => Check::new(Level::Fail, "binder", facts::binder_host_steps(kind)),
+        (false, None) => Check::new(Level::Fail, "binder", "not loaded: run `annex setup`"),
+    }
+}
+
+fn binder_on_boot(container: Option<&str>) -> Check {
+    if container.is_some() {
+        return Check::new(
+            Level::Ok,
+            "binder on boot",
+            "up to the host: this machine is a container",
+        );
+    }
     if facts::has_binder_at_boot() {
         Check::new(Level::Ok, "binder on boot", "loaded at boot")
     } else {
@@ -232,6 +270,9 @@ fn window_mode() -> Check {
 }
 
 fn desktop_clipboard() -> Check {
+    if !desktop::has_session() {
+        return no_desktop("clipboard");
+    }
     if env::var_os("DISPLAY").is_some() {
         Check::new(Level::Ok, "clipboard", "X11/XWayland clipboard reachable")
     } else {
@@ -244,6 +285,9 @@ fn desktop_clipboard() -> Check {
 }
 
 fn desktop_notifications() -> Check {
+    if !desktop::has_session() {
+        return no_desktop("notifications");
+    }
     match which("notify-send") {
         Some(_) => Check::new(Level::Ok, "notifications", "notify-send available"),
         None => Check::new(
@@ -255,6 +299,9 @@ fn desktop_notifications() -> Check {
 }
 
 fn panel_menu() -> Check {
+    if !desktop::has_session() {
+        return no_desktop("panel menu");
+    }
     if facts::has_tray_host() {
         Check::new(
             Level::Ok,
@@ -270,7 +317,19 @@ fn panel_menu() -> Check {
     }
 }
 
-fn disk_images() -> Check {
+/// Desktop features don't apply over SSH or on a CI runner, so they aren't worth a warning there.
+fn no_desktop(name: &'static str) -> Check {
+    Check::new(Level::Ok, name, "not needed: no desktop session")
+}
+
+fn disk_images(container: Option<&str>) -> Check {
+    if container.is_some() {
+        return Check::new(
+            Level::Ok,
+            "disk images",
+            "nothing to hide: this machine is a container",
+        );
+    }
     if facts::has_image_rule() {
         Check::new(
             Level::Ok,
@@ -283,5 +342,31 @@ fn disk_images() -> Check {
             "disk images",
             "each running instance shows about 36 drives in your dock: run `annex setup`",
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn json_reports_failures_for_ci() {
+        let checks = vec![
+            Check::new(Level::Ok, "kernel", "7.0.0"),
+            Check::new(Level::Fail, "binder", "not loaded"),
+        ];
+        let report: serde_json::Value = serde_json::from_str(&to_json(&checks)).unwrap();
+        assert_eq!(report["ok"], false);
+        assert_eq!(report["checks"][1]["level"], "fail");
+        assert_eq!(report["checks"][1]["name"], "binder");
+        assert!(!has_failures(&checks[..1]));
+    }
+
+    #[test]
+    fn a_container_without_binder_points_at_the_host() {
+        let check = host(Some("lxc"));
+        assert!(check.detail.contains("lxc"));
+        assert_eq!(binder_on_boot(Some("lxc")).level, Level::Ok);
+        assert_eq!(disk_images(Some("docker")).level, Level::Ok);
     }
 }

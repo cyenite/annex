@@ -1,4 +1,5 @@
 use super::distro::{Package, PackageManager};
+use super::facts::binder_host_steps;
 
 /// What setup found on this machine. Gathered once, so the plan is a pure function of it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -25,6 +26,8 @@ pub struct Facts {
     pub is_window_mode_ready: bool,
     /// Whether the release matching this version ships the Manager; only looked up when needed.
     pub is_manager_published: bool,
+    /// The kind of container this machine is (`lxc`, `docker`), whose kernel is its host's.
+    pub container: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -189,14 +192,21 @@ pub fn plan(facts: &Facts, options: Options) -> Plan {
     ) {
         steps.push(Step::JoinDockerGroup);
     }
-    if check(facts.has_binder, "binder loaded") {
-        steps.push(Step::LoadBinder);
-    }
-    if check(facts.has_binder_at_boot, "binder at boot") {
-        steps.push(Step::LoadBinderAtBoot);
-    }
-    if check(facts.has_image_rule, "Android disk images hidden") {
-        steps.push(Step::HideAndroidImages);
+    // A container can't load kernel modules or see the host's udev, so the host does both.
+    if let Some(kind) = &facts.container {
+        if check(facts.has_binder, "binder loaded (by the host)") {
+            steps.push(Step::Manual(binder_host_steps(kind)));
+        }
+    } else {
+        if check(facts.has_binder, "binder loaded") {
+            steps.push(Step::LoadBinder);
+        }
+        if check(facts.has_binder_at_boot, "binder at boot") {
+            steps.push(Step::LoadBinderAtBoot);
+        }
+        if check(facts.has_image_rule, "Android disk images hidden") {
+            steps.push(Step::HideAndroidImages);
+        }
     }
     if options.window_mode && check(facts.is_window_mode_ready, "window mode set up") {
         steps.push(Step::InitWindowMode);
@@ -266,6 +276,7 @@ mod tests {
             is_bridge_installed: true,
             is_window_mode_ready: true,
             is_manager_published: true,
+            container: None,
         }
     }
 
@@ -395,6 +406,26 @@ mod tests {
         let steps = plan(&facts, options).steps;
         assert_eq!(steps, [Step::AddManagerEntry]);
         assert!(!steps[0].needs_sudo());
+    }
+
+    #[test]
+    fn a_container_leaves_kernel_modules_and_udev_to_its_host() {
+        let facts = Facts {
+            has_binder: false,
+            has_image_rule: false,
+            has_binder_at_boot: false,
+            container: Some("lxc".to_string()),
+            ..ready()
+        };
+        let steps = plan(&facts, Options::default()).steps;
+        assert!(
+            matches!(&steps[..], [Step::Manual(text)] if text.contains("lxc container") && text.contains("modprobe"))
+        );
+        let loaded = Facts {
+            has_binder: true,
+            ..facts
+        };
+        assert!(plan(&loaded, Options::default()).steps.is_empty());
     }
 
     #[test]

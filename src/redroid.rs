@@ -88,6 +88,8 @@ pub struct Container {
     pub config: String,
     pub display: Display,
     pub android: AndroidVersion,
+    /// Removed with its data volume by `annex down`, for CI runs that must start clean.
+    pub is_ephemeral: bool,
 }
 
 impl Container {
@@ -104,6 +106,7 @@ pub fn list() -> Result<Vec<Instance>> {
         "{{.Label \"annex.adb-port\"}}",
         "{{.Label \"annex.config\"}}",
         "{{.Label \"annex.display\"}}",
+        "{{.Label \"annex.ephemeral\"}}",
     ]
     .join("\t");
     let output = docker::run(&[
@@ -132,6 +135,11 @@ pub fn up(adb: &Adb, name: &str, options: UpOptions) -> Result<Instance> {
                     "{name} runs Android {}, not {}: remove it with `annex rm {name}` first",
                     container.android.label(),
                     wanted.label()
+                );
+            }
+            if options.is_ephemeral && !container.is_ephemeral {
+                bail!(
+                    "{name} already exists and keeps its data: remove it with `annex rm {name}` to recreate it with --ephemeral"
                 );
             }
             let display = options.display.unwrap_or(container.display);
@@ -170,6 +178,7 @@ pub fn up(adb: &Adb, name: &str, options: UpOptions) -> Result<Instance> {
                 config: CONTAINER_CONFIG.to_string(),
                 display: options.display.unwrap_or_default(),
                 android,
+                is_ephemeral: options.is_ephemeral,
             };
             create(adb, name, &container)?;
             docker::run(&["start", &container_name(name)])?;
@@ -185,7 +194,11 @@ pub fn down(instance: &Instance) -> Result<()> {
     if instance.state == State::Frozen {
         docker::run(&["unpause", &container_name(&instance.name)])?;
     }
-    docker::run(&["stop", "--time", "5", &container_name(&instance.name)]).map(drop)
+    docker::run(&["stop", "--time", "5", &container_name(&instance.name)])?;
+    if instance.is_ephemeral() {
+        remove(instance, false)?;
+    }
+    Ok(())
 }
 
 pub fn freeze(instance: &Instance) -> Result<()> {
@@ -256,6 +269,7 @@ fn parse(line: &str) -> Result<Instance> {
     // Labels added in later versions are missing on older containers, and docker's trailing
     // empty columns are dropped by trimming, so every column after the port is optional.
     let config = fields.get(4).copied().unwrap_or_default();
+    let is_ephemeral = fields.get(6).is_some_and(|value| *value == "1");
     let display = match fields.get(5).copied().unwrap_or_default() {
         "" => Display::default(),
         raw => raw
@@ -281,6 +295,7 @@ fn parse(line: &str) -> Result<Instance> {
             config: config.to_string(),
             display,
             android,
+            is_ephemeral,
         }),
     })
 }
@@ -311,6 +326,7 @@ fn create(adb: &Adb, name: &str, container: &Container) -> Result<()> {
     let gpu_argument = format!("androidboot.redroid_gpu_mode={gpu_mode}");
     let display_label = format!("annex.display={display}");
     let android_label = format!("annex.android={}", android.label());
+    let ephemeral_label = format!("annex.ephemeral={}", u8::from(container.is_ephemeral));
     // IDEs list devices by model, which would otherwise be the image's "redroid15_x86_64". The
     // boot arguments split on spaces, so words are joined with underscores, which Flutter and
     // VS Code show as spaces.
@@ -340,6 +356,8 @@ fn create(adb: &Adb, name: &str, container: &Container) -> Result<()> {
         &config_label,
         "--label",
         &display_label,
+        "--label",
+        &ephemeral_label,
         "--volume",
         &data_mount,
         "--volume",
@@ -414,7 +432,7 @@ fn free_port(instances: &[Instance]) -> Result<u16> {
         })
 }
 
-fn wait_until_booted(instance: &Instance) -> Result<()> {
+pub fn wait_until_booted(instance: &Instance) -> Result<()> {
     let started = Instant::now();
     let container = container_name(&instance.name);
     loop {
@@ -515,6 +533,15 @@ mod tests {
         assert!(container.is_outdated());
         assert_eq!(container.config, "");
         assert_eq!(container.display, Display::default());
+        assert!(!container.is_ephemeral);
+    }
+
+    #[test]
+    fn reads_the_ephemeral_label() {
+        let instance = parse("running\tci\t15\t5602\t6\t1080x2400/420\t1").unwrap();
+        assert!(instance.is_ephemeral());
+        let kept = parse("running\tci\t15\t5602\t6\t1080x2400/420\t0").unwrap();
+        assert!(!kept.is_ephemeral());
     }
 
     #[test]

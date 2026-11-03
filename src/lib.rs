@@ -11,6 +11,7 @@ pub mod instance;
 pub mod launcher;
 pub mod location;
 pub mod paths;
+pub mod preferences;
 pub mod process;
 pub mod redroid;
 pub mod scrcpy;
