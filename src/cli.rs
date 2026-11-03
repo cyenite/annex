@@ -1,6 +1,9 @@
+use std::path::PathBuf;
+
 use clap::{Parser, Subcommand};
 use clap_complete::Shell;
 
+use annex_core::capture::Since;
 use annex_core::instance::{AndroidVersion, Mode};
 use annex_core::redroid::Display;
 
@@ -132,6 +135,31 @@ Annex may use it. A computer without GPS often knows its location only roughly."
         /// Google Maps link
         #[arg(value_name = "ARGS", num_args = 0..=2, allow_hyphen_values = true)]
         args: Vec<String>,
+    },
+    /// Record an instance's screen to a video file, with no time limit
+    #[command(
+        override_usage = "annex record [NAME] start -o <FILE>\n       annex record [NAME] stop",
+        after_help = "For example: annex record e2e start -o run.mp4, then annex record e2e stop. \
+The recording runs in the background, without a window, until `stop`."
+    )]
+    Record {
+        /// An optional instance, then `start` or `stop`
+        #[arg(value_name = "ARGS", num_args = 1..=2, required = true)]
+        args: Vec<String>,
+        /// The video to write, .mp4 or .mkv (for `start`)
+        #[arg(short, long, value_name = "FILE")]
+        output: Option<PathBuf>,
+    },
+    /// Write Android's log (logcat, threadtime format) to a file or the terminal
+    Logs {
+        /// The instance [default: `default`, or the only running instance]
+        name: Option<String>,
+        /// The file to write [default: the terminal]
+        #[arg(short, long, value_name = "FILE")]
+        output: Option<PathBuf>,
+        /// Only the last part, like 30s, 10m or 2h [default: everything Android kept]
+        #[arg(long, value_name = "DURATION")]
+        since: Option<Since>,
     },
     /// Copy files or folders from this machine to an instance
     #[command(override_usage = "annex push [NAME] <PATH>... [--to <FOLDER>]")]
@@ -266,6 +294,21 @@ mod tests {
         };
         assert_eq!(android, Some(AndroidVersion::Android14));
         assert_eq!(display.unwrap().to_string(), "1600x2560/320");
+    }
+
+    #[test]
+    fn parses_evidence_capture() {
+        let cli =
+            Cli::try_parse_from(["annex", "record", "e2e", "start", "-o", "run.mp4"]).unwrap();
+        let Commands::Record { args, output } = cli.command else {
+            panic!("expected record");
+        };
+        assert_eq!(args, ["e2e", "start"]);
+        assert_eq!(output, Some(PathBuf::from("run.mp4")));
+        let cli = Cli::try_parse_from(["annex", "logs", "e2e", "--since", "10m", "-o", "log.txt"])
+            .unwrap();
+        assert!(matches!(cli.command, Commands::Logs { since: Some(_), .. }));
+        assert!(Cli::try_parse_from(["annex", "logs", "--since", "soon"]).is_err());
     }
 
     #[test]

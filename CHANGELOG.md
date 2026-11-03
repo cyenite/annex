@@ -4,6 +4,11 @@ All notable changes to annex are recorded here. The format follows [Keep a Chang
 
 ## Unreleased
 
+### Added
+
+- `annex record [NAME] start -o FILE` and `annex record [NAME] stop` record an instance's screen to an MP4 or MKV file, in the background and without a window or time limit, so CI runs can keep video evidence.
+- `annex logs [NAME] [-o FILE] [--since 10m]` writes Android's log in logcat's threadtime format to a file or the terminal.
+
 ## 0.5.1 - 2026-10-30
 
 ### Fixed

@@ -135,6 +135,19 @@ To pin an exact spot, right-click it in Google Maps and click its coordinates to
 
 `host` is opt-in per instance and needs the desktop bridge and your desktop's Location Services; GNOME asks once whether Annex may use your location. A computer without GPS finds itself by looking up nearby Wi-Fi networks, and where the lookup service doesn't know them it guesses from the IP address, which can be tens of kilometers off. `annex location` shows how close the computer's position is; for anything that depends on being at an address, pin the spot instead. The position is only shared with instances you set to `host` from this computer; that choice is kept here, not in the instance, and `annex rm` withdraws it.
 
+### Recordings and logs
+
+Keep evidence of a test run:
+
+```sh
+annex record e2e start -o run.mp4       # record the screen in the background, no window
+annex record e2e stop                   # finish the video
+annex logs e2e -o logcat.txt            # Android's log, logcat's threadtime format
+annex logs e2e --since 10m              # only the last 10 minutes, to the terminal
+```
+
+A recording has no time limit (Android's own screen recorder stops at 3 minutes) and needs no desktop session, so it works on CI runners; `stop` works from any shell or a later CI step. Android keeps only its most recent log, so for a long run, save it before the instance stops.
+
 ## On your desktop
 
 ### Annex Manager

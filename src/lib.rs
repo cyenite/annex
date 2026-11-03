@@ -3,6 +3,7 @@
 
 pub mod adb;
 pub mod bridge;
+pub mod capture;
 pub mod desktop;
 pub mod docker;
 pub mod doctor;
