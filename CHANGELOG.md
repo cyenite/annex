@@ -4,6 +4,14 @@ All notable changes to annex are recorded here. The format follows [Keep a Chang
 
 ## Unreleased
 
+### Fixed
+
+- Instances no longer go black when the computer runs low on swap. Android's memory manager inside an instance sees the computer's swap, so when it ran low it closed apps, the home screen included, and the screen stayed black until you pressed Home. It no longer closes apps over the computer's swap.
+
+### Changed
+
+- Container-mode instances rebuild on their next `annex up` to pick up the memory setting; their data is kept.
+
 ## 0.6.0 - 2026-11-03
 
 ### Added

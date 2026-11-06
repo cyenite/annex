@@ -15,7 +15,7 @@ use crate::{docker, gpu, location};
 const PORTS: std::ops::Range<u16> = 5600..5700;
 const BOOT_TIMEOUT: Duration = Duration::from_secs(180);
 const PULL_ATTEMPTS: u32 = 3;
-const CONTAINER_CONFIG: &str = "6";
+const CONTAINER_CONFIG: &str = "7";
 const ADB_KEYS_PATH: &str = "/product/etc/security/adb_keys";
 // adbd also trusts keys saved on the data volume ("always allow" and wireless pairings). Masking
 // both with a read-only /dev/null means only the mounted user key is ever trusted, including on
@@ -382,6 +382,9 @@ fn create(adb: &Adb, name: &str, container: &Container) -> Result<()> {
         android.image(),
         "androidboot.use_memfd=true",
         "ro.adb.secure=1",
+        // lmkd reads the host's swap through the shared kernel, so with the default 10% it kills
+        // even the launcher whenever the host's swap runs low, leaving the screen black.
+        "ro.lmk.swap_free_low_percentage=0",
         &model,
         "ro.product.brand=Annex",
         "ro.product.manufacturer=Annex",
@@ -508,7 +511,7 @@ mod tests {
 
     #[test]
     fn parses_a_current_container() {
-        let instance = parse("running\tpixel\t15\t5600\t6\t720x1280/320").unwrap();
+        let instance = parse("running\tpixel\t15\t5600\t7\t720x1280/320").unwrap();
         assert_eq!(instance.name, "pixel");
         assert_eq!(instance.serial, "127.0.0.1:5600");
         assert_eq!(instance.state, State::Running);

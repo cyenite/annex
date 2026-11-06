@@ -261,6 +261,7 @@ Anyone in the `docker` group can still open a shell in an instance, as with any 
 | Window mode won't freeze, saying its state is out of sync | Run `annex setup --repair`. |
 | An app says location is off although it's on in Settings, or rejects it as a mock location | Run `annex up` for that instance: an instance that was already running when you updated annex gets its GPS on its next `annex up` (data kept). An app that recorded mock locations before may need its data cleared. |
 | Opening the camera crashes an app, or the Camera app stops | Run `annex up` for that instance: an instance that was already running when you updated annex reports that it has no camera from its next `annex up` (data kept). |
+| The screen goes black except the status bar, while the computer is short on memory | Press Home, or run `adb -s <serial> shell input keyevent HOME`. Then run `annex up` for that instance: one that was already running when you updated annex stops closing apps over the computer's swap from its next `annex up` (data kept). |
 | No annex menu in the panel | On GNOME, enable the AppIndicator extension; `annex doctor` checks for it. |
 | Dozens of small drives fill the dock while an instance runs | Run `annex setup`. Android mounts each of its system modules as a disk image, and setup tells your desktop to ignore them. |
 
