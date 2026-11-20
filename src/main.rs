@@ -10,9 +10,11 @@ use anyhow::{Result, bail};
 use clap::{CommandFactory, Parser, ValueEnum};
 
 use annex_core::adb::Adb;
+use annex_core::camera::{self, Picture};
 use annex_core::instance::{self, Backend, State, UpOptions};
 use annex_core::location::{self, Fix, Location};
 use annex_core::network::{self, Condition};
+use annex_core::play_services::push::{self, Message};
 use annex_core::preferences::{self, Preferences};
 use annex_core::{bridge, capture, desktop, doctor, launcher, setup, snapshot, update, window};
 use cli::{BridgeCommand, Cli, Commands, LauncherCommand, SnapCommand};
@@ -156,6 +158,7 @@ fn run(command: Commands) -> Result<ExitCode> {
             display,
             no_window,
             ephemeral,
+            play_services,
             wait_boot,
             timezone,
             locale,
@@ -167,6 +170,7 @@ fn run(command: Commands) -> Result<ExitCode> {
                 mode,
                 display,
                 android,
+                play_services,
                 is_ephemeral: ephemeral,
             };
             let preferences = Preferences {
@@ -302,6 +306,43 @@ fn run(command: Commands) -> Result<ExitCode> {
                 elapsed()
             );
         }
+        Commands::Camera { args } => {
+            let (name, rest) = instance::split_name(args, 1)?;
+            let (name, wanted) = match &rest[..] {
+                [] => (name, None),
+                [value] => match Picture::from_label(value) {
+                    Some(wanted) => (name, Some(wanted)),
+                    None if instance::find(value)?.is_some() => (value.clone(), None),
+                    None => bail!(
+                        "{value:?} is not a picture: {}",
+                        Picture::value_variants()
+                            .iter()
+                            .map(|picture| picture.label())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                },
+                _ => bail!("give one instance and one picture"),
+            };
+            let instance = instance::require_running(&name)?;
+            match wanted {
+                None => {
+                    let current = camera::picture(&instance)?;
+                    println!("{name}'s cameras film:");
+                    for picture in Picture::value_variants() {
+                        let mark = if *picture == current { "*" } else { " " };
+                        println!("{mark} {:<10} {}", picture.label(), picture.describe());
+                    }
+                }
+                Some(picture) => {
+                    camera::set_picture(&instance, picture)?;
+                    report(format!(
+                        "{name}'s cameras now film the {}; apps see it the next time they open a camera",
+                        picture.label()
+                    ));
+                }
+            }
+        }
         Commands::Location { args } => {
             let (name, rest) = instance::split_name(args, 1)?;
             let (name, wanted) = match &rest[..] {
@@ -376,6 +417,34 @@ fn run(command: Commands) -> Result<ExitCode> {
                     network::set(&instance, condition)?;
                     report(format!("{name} is now {}", condition.describe()));
                 }
+            }
+        }
+        Commands::Fcm {
+            args,
+            title,
+            body,
+            data,
+        } => {
+            let (name, rest) = instance::split_name(args, 2)?;
+            let instance = instance::require_running(&name)?;
+            let has_message = title.is_some() || body.is_some() || !data.is_empty();
+            match &rest[..] {
+                [action, package] if action == "token" && !has_message => {
+                    println!("{}", push::registration(&instance, package)?.token);
+                }
+                [action, package] if action == "send" => {
+                    let message = Message {
+                        body,
+                        title,
+                        data: push::parse_data(&data)?,
+                    };
+                    push::send(&Adb::locate()?, &instance, package, &message)?;
+                    report(format!("sent a test message to {package} on {name}"));
+                }
+                [action, _] if action == "token" => {
+                    bail!("--title, --body and --data go with `send`, not `token`")
+                }
+                _ => bail!("give `token <PACKAGE>` or `send <PACKAGE>`"),
             }
         }
         Commands::Record { args, output } => {
@@ -509,16 +578,19 @@ fn list() -> Result<()> {
         return Ok(());
     }
     println!(
-        "{:<20} {:<8} {:<10} {:<8} {:<22} SNAPSHOTS",
-        "NAME", "STATE", "MODE", "ANDROID", "ADB"
+        "{:<20} {:<8} {:<10} {:<8} {:<22} {:<9} SNAPSHOTS",
+        "NAME", "STATE", "MODE", "ANDROID", "ADB", "GOOGLE"
     );
     for instance in instances {
         let snapshots = match instance.backend {
             Backend::Redroid(_) => snapshot::list(&instance.name)?.len().to_string(),
             Backend::Waydroid { .. } => "-".to_string(),
         };
+        let google = instance
+            .play_services()
+            .map_or("-", |play_services| play_services.label());
         println!(
-            "{:<20} {:<8} {:<10} {:<8} {:<22} {snapshots}",
+            "{:<20} {:<8} {:<10} {:<8} {:<22} {google:<9} {snapshots}",
             instance.name,
             instance.state.label(),
             instance.backend.mode().label(),
@@ -545,6 +617,7 @@ fn list_json() -> Result<String> {
             "android": instance.android(),
             "serial": instance.serial,
             "ephemeral": instance.is_ephemeral(),
+            "play_services": instance.play_services().map(|play_services| play_services.label()),
             "snapshots": snapshots,
         }));
     }

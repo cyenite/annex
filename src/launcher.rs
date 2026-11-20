@@ -300,6 +300,7 @@ mod tests {
                 display: Display::default(),
                 android: AndroidVersion::Android15,
                 is_ephemeral,
+                play_services: crate::play_services::PlayServices::None,
             }),
         };
         assert!(wants_entry(true, &instance(false)));

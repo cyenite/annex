@@ -5,6 +5,7 @@ use anyhow::{Context, Result, bail};
 use clap::ValueEnum;
 
 use crate::adb::Adb;
+use crate::play_services::PlayServices;
 use crate::redroid::{self, Container, Display};
 use crate::{location, waydroid};
 
@@ -118,6 +119,14 @@ impl Instance {
         }
     }
 
+    /// Google Play services on a container-mode instance; window mode's come from its image.
+    pub fn play_services(&self) -> Option<PlayServices> {
+        match &self.backend {
+            Backend::Redroid(container) => Some(container.play_services),
+            Backend::Waydroid { .. } => None,
+        }
+    }
+
     pub fn is_ephemeral(&self) -> bool {
         matches!(&self.backend, Backend::Redroid(container) if container.is_ephemeral)
     }
@@ -138,6 +147,7 @@ pub struct UpOptions {
     pub mode: Option<Mode>,
     pub display: Option<Display>,
     pub android: Option<AndroidVersion>,
+    pub play_services: Option<PlayServices>,
     pub is_ephemeral: bool,
 }
 
@@ -197,6 +207,9 @@ pub fn up(adb: &Adb, name: &str, options: UpOptions) -> Result<Instance> {
                 bail!(
                     "--android and --display apply to container mode; window mode's Android and screen come from its system image"
                 );
+            }
+            if options.play_services.is_some() {
+                bail!("--play-services works in container mode only");
             }
             if options.is_ephemeral {
                 bail!(
