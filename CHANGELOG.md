@@ -4,6 +4,8 @@ All notable changes to annex are recorded here. The format follows [Keep a Chang
 
 ## Unreleased
 
+## 0.7.0 - 2026-11-20
+
 ### Added
 
 - Android 15 instances have a back and a front camera. Both film a drawn picture, so apps can show a camera preview, take photos, record video and analyse frames instead of finding no camera, and the built-in Camera app is back for apps that ask it to take a photo. Instances need hardware rendering for it; Android 13 and 14 instances, and instances without hardware rendering, still report no camera.
