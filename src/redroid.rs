@@ -15,16 +15,12 @@ use crate::{camera, docker, gpu, location};
 const PORTS: std::ops::Range<u16> = 5600..5700;
 const BOOT_TIMEOUT: Duration = Duration::from_secs(180);
 const PULL_ATTEMPTS: u32 = 3;
-const CONTAINER_CONFIG: &str = "8";
-const ADB_KEYS_PATH: &str = "/product/etc/security/adb_keys";
+const CONTAINER_CONFIG: &str = "9";
 // adbd also trusts keys saved on the data volume ("always allow" and wireless pairings). Masking
 // both with a read-only /dev/null means only the mounted user key is ever trusted, including on
 // volumes that ran without authentication before.
 const SAVED_ADB_KEYS: &str = "/data/misc/adb/adb_keys";
 const SAVED_WIRELESS_KEYS: &str = "/data/misc/adb/adb_temp_keys.xml";
-// The simulated Bluetooth HAL listens on TCP 6111/6211/6311 on every interface, reachable by any
-// local user through the Docker bridge; masking its init script keeps it from starting.
-const BLUETOOTH_SIM_INIT: &str = "/vendor/etc/init/android.hardware.bluetooth@1.1-service.sim.rc";
 
 /// Screen size and density, written like scrcpy's `--new-display`: `1080x2400/420`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -330,7 +326,7 @@ fn create(adb: &Adb, name: &str, container: &Container) -> Result<()> {
     let dpi = format!("androidboot.redroid_dpi={}", display.dpi);
     let width = format!("androidboot.redroid_width={}", display.width);
     let height = format!("androidboot.redroid_height={}", display.height);
-    let key_mount = format!("{}:{ADB_KEYS_PATH}:ro", public_key.display());
+    let key_mount = format!("{}:{}:ro", public_key.display(), adb_keys_path(*android));
     let name_label = format!("annex.name={name}");
     let port_label = format!("annex.adb-port={port}");
     let data_mount = format!("{}:/data", volume_name(name));
@@ -344,12 +340,16 @@ fn create(adb: &Adb, name: &str, container: &Container) -> Result<()> {
     // boot arguments split on spaces, so words are joined with underscores, which Flutter and
     // VS Code show as spaces.
     let model = format!("ro.product.model={}", model_name(name, *android));
-    let bluetooth_mask = mask(BLUETOOTH_SIM_INIT);
+    let bluetooth_mask = mask(bluetooth_sim_init(*android));
     let saved_keys_mask = mask(SAVED_ADB_KEYS);
     let wireless_keys_mask = mask(SAVED_WIRELESS_KEYS);
-    let camera = camera::setup(camera::is_supported(*android, has_hardware_rendering))
+    let camera = camera::setup(*android, has_hardware_rendering)
         .context("could not write the camera's files")?;
-    let gnss_mounts = location::gnss_mounts().context("could not write the GPS driver's files")?;
+    let gnss_mounts = if location::is_supported(*android) {
+        location::gnss_mounts().context("could not write the GPS driver's files")?
+    } else {
+        vec![]
+    };
     // A stand-in that can't be downloaded or prepared mustn't keep the instance from starting. The
     // label records what the instance got, so `ls` stays truthful and asking again retries.
     let (play_services, play_services_mounts) = match container.play_services {
@@ -396,12 +396,15 @@ fn create(adb: &Adb, name: &str, container: &Container) -> Result<()> {
         "--mount",
         &bluetooth_mask,
         "--mount",
-        &saved_keys_mask,
-        "--mount",
         &wireless_keys_mask,
         "--publish",
         &port_binding,
     ];
+    // Android 13 and 14 only trust keys on the data volume, so there the user's key takes that
+    // place.
+    if adb_keys_path(*android) != SAVED_ADB_KEYS {
+        args.extend(["--mount", &saved_keys_mask]);
+    }
     for mount in gnss_mounts
         .iter()
         .chain(&camera.mounts)
@@ -520,6 +523,27 @@ fn model_name(name: &str, android: AndroidVersion) -> String {
     format!("Annex_{}_{}", words.join("_"), android.label())
 }
 
+/// Where adbd reads the trusted key annex mounts, as tested on each image: the root up to
+/// Android 12, the data volume's saved keys on 13 and 14 (whose adbd ignores the other two), and
+/// the product partition from 15.
+fn adb_keys_path(android: AndroidVersion) -> &'static str {
+    match android {
+        AndroidVersion::Android13 | AndroidVersion::Android14 => SAVED_ADB_KEYS,
+        AndroidVersion::Android15 => "/product/etc/security/adb_keys",
+        _ => "/adb_keys",
+    }
+}
+
+/// The simulated Bluetooth HAL listens on TCP 6111/6211/6311 on every interface, reachable by any
+/// local user through the Docker bridge; masking its init script keeps it from starting.
+fn bluetooth_sim_init(android: AndroidVersion) -> &'static str {
+    if android >= AndroidVersion::Android11 {
+        "/vendor/etc/init/android.hardware.bluetooth@1.1-service.sim.rc"
+    } else {
+        "/vendor/etc/init/android.hardware.bluetooth@1.0-service.sim.rc"
+    }
+}
+
 pub(crate) fn mask(path: &str) -> String {
     format!("type=bind,src=/dev/null,dst={path},readonly")
 }
@@ -541,7 +565,7 @@ mod tests {
 
     #[test]
     fn parses_a_current_container() {
-        let instance = parse("running\tpixel\t15\t5600\t8\t720x1280/320").unwrap();
+        let instance = parse("running\tpixel\t15\t5600\t9\t720x1280/320").unwrap();
         assert_eq!(instance.name, "pixel");
         assert_eq!(instance.serial, "127.0.0.1:5600");
         assert_eq!(instance.state, State::Running);
@@ -617,6 +641,25 @@ mod tests {
         assert_eq!(
             model_name("old-phone", AndroidVersion::Android13),
             "Annex_Old_Phone_13"
+        );
+    }
+
+    #[test]
+    fn older_images_keep_keys_and_bluetooth_where_they_had_them() {
+        assert_eq!(adb_keys_path(AndroidVersion::Android8), "/adb_keys");
+        assert_eq!(adb_keys_path(AndroidVersion::Android9), "/adb_keys");
+        assert_eq!(adb_keys_path(AndroidVersion::Android12), "/adb_keys");
+        assert_eq!(adb_keys_path(AndroidVersion::Android13), SAVED_ADB_KEYS);
+        assert_eq!(adb_keys_path(AndroidVersion::Android14), SAVED_ADB_KEYS);
+        assert_eq!(
+            adb_keys_path(AndroidVersion::Android15),
+            "/product/etc/security/adb_keys"
+        );
+        assert!(bluetooth_sim_init(AndroidVersion::Android10).contains("bluetooth@1.0"));
+        assert!(bluetooth_sim_init(AndroidVersion::Android11).contains("bluetooth@1.1"));
+        assert_eq!(
+            model_name("legacy", AndroidVersion::Android8),
+            "Annex_Legacy_8.1"
         );
     }
 

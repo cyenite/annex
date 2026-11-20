@@ -14,7 +14,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 
 use crate::docker;
-use crate::instance::{Backend, Instance};
+use crate::instance::{AndroidVersion, Backend, Instance};
 use crate::paths::{data_dir, write_if_changed};
 use crate::process::stdout_within;
 use crate::redroid::container_name;
@@ -119,6 +119,12 @@ pub fn parse_input(value: &str) -> Result<Location> {
     )
     .context("could not open that link")?;
     expanded.parse().map_err(anyhow::Error::msg)
+}
+
+/// annex's GNSS HAL implements the AIDL interface Android 12 introduced; older images only use a
+/// HIDL one, so their location is Android's own and can't be moved.
+pub fn is_supported(android: AndroidVersion) -> bool {
+    android >= AndroidVersion::Android12
 }
 
 /// Writes the GNSS HAL's files under annex's data folder and returns the `--mount` values that
@@ -317,6 +323,11 @@ fn consent_path(name: &str) -> PathBuf {
 
 fn container(instance: &Instance) -> Result<String> {
     match &instance.backend {
+        Backend::Redroid(container) if !is_supported(container.android) => bail!(
+            "{} runs Android {}, where annex can't simulate location (Android 12 and later only)",
+            instance.name,
+            container.android.label()
+        ),
         Backend::Redroid(_) => Ok(container_name(&instance.name)),
         Backend::Waydroid { .. } => bail!(
             "{} runs in window mode, where annex doesn't simulate location",
