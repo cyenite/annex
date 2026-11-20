@@ -5,6 +5,9 @@
 //! Android tells the apps they are blocked: `getActiveNetwork()` returns null and callbacks see
 //! `onBlockedStatusChanged`, as on a phone with no signal. Dropping packets instead would leave
 //! Android reporting a working network. Airplane mode doesn't help: it never turns Ethernet off.
+//! Android 15 is the first whose shell can drive that chain (`cmd connectivity
+//! set-chain3-enabled`); older instances get slow and lossy only, and dropping their packets with
+//! iptables instead fails on hosts without the legacy iptables tables.
 //!
 //! Slow and lossy shape the instance's interface with tc netem from inside its network namespace.
 //! adb (TCP 5555) and ARP go through a band of their own that is never shaped, so annex, IDEs and
@@ -17,7 +20,7 @@ use anyhow::{Result, bail};
 use clap::ValueEnum;
 
 use crate::docker;
-use crate::instance::Instance;
+use crate::instance::{AndroidVersion, Instance};
 use crate::redroid::container_name;
 
 /// The traffic control pieces slow and lossy need. Most kernels load them on demand; a kernel
@@ -72,29 +75,40 @@ impl Condition {
 }
 
 pub fn get(instance: &Instance) -> Result<Condition> {
-    instance.container("network conditions")?;
+    let android = instance.container("network conditions")?.android;
     let container = container_name(&instance.name);
-    let chain = docker::run(&[
-        "exec",
-        &container,
-        "cmd",
-        "connectivity",
-        "get-chain3-enabled",
-    ])?;
+    let chain = if has_firewall(android) {
+        docker::run(&[
+            "exec",
+            &container,
+            "cmd",
+            "connectivity",
+            "get-chain3-enabled",
+        ])?
+    } else {
+        String::new()
+    };
     let qdiscs = docker::run(&["exec", &container, "tc", "qdisc", "show", "dev", "eth0"])?;
     Ok(read_condition(&chain, &qdiscs))
 }
 
 pub fn set(instance: &Instance, condition: Condition) -> Result<()> {
-    instance.container("network conditions")?;
+    let android = instance.container("network conditions")?.android;
     let container = container_name(&instance.name);
+    if condition == Condition::Offline && !has_firewall(android) {
+        bail!(
+            "offline needs Android 15, whose firewall can tell apps they're blocked; {} runs Android {}. slow and lossy work on every version",
+            instance.name,
+            android.label()
+        );
+    }
     if matches!(condition, Condition::Slow | Condition::Lossy) && !can_shape() {
         bail!(
             "this machine doesn't load the kernel's traffic shaping modules on demand: run `annex setup`, or `sudo modprobe -a {}`",
             MODULES.join(" ")
         );
     }
-    let script = script(condition);
+    let script = script(condition, has_firewall(android));
     match docker::run(&["exec", &container, "sh", "-c", &script]) {
         Err(error) if error.to_string().contains(SHAPE_ERROR) => bail!(
             "the kernel has no traffic shaping support for {}: run `sudo modprobe -a {}`",
@@ -116,16 +130,25 @@ pub fn can_shape() -> bool {
             .all(|module| Path::new("/sys/module").join(module).exists())
 }
 
+/// Android 15 added the shell commands that drive the firewall chain offline uses.
+fn has_firewall(android: AndroidVersion) -> bool {
+    android >= AndroidVersion::Android15
+}
+
 /// One shell script that first clears any earlier condition, so switching between conditions
 /// never stacks them. The clean-up commands may fail harmlessly; every later one must succeed.
-fn script(condition: Condition) -> String {
-    let cleanup = [
+fn script(condition: Condition, has_firewall: bool) -> String {
+    let mut cleanup = vec![
         "tc qdisc del dev eth0 root 2>/dev/null".to_string(),
         format!("tc filter del dev eth0 ingress prio {ADB_INGRESS_PRIO} 2>/dev/null"),
         format!("tc filter del dev eth0 ingress prio {POLICE_INGRESS_PRIO} 2>/dev/null"),
-        "for p in $(pm list packages -3 | cut -d: -f2); do cmd connectivity set-package-networking-enabled true \"$p\" >/dev/null; done".to_string(),
-        "cmd connectivity set-chain3-enabled false >/dev/null".to_string(),
     ];
+    if has_firewall {
+        cleanup.extend([
+            "for p in $(pm list packages -3 | cut -d: -f2); do cmd connectivity set-package-networking-enabled true \"$p\" >/dev/null; done".to_string(),
+            "cmd connectivity set-chain3-enabled false >/dev/null".to_string(),
+        ]);
+    }
     let mut steps = Vec::new();
     match condition {
         Condition::Online => {}
@@ -146,6 +169,8 @@ fn script(condition: Condition) -> String {
         }
         Condition::Lossy => steps.extend(shaping(LOSSY_NETEM)),
     }
+    // The script's status is its last command's, so clean-up ends on one that always succeeds.
+    cleanup.push("true".to_string());
     let mut script = cleanup.join("; ");
     for step in steps {
         script.push_str(" && ");
@@ -194,28 +219,31 @@ mod tests {
     #[test]
     fn every_condition_starts_by_clearing_the_last_one() {
         for condition in Condition::value_variants() {
-            let script = script(*condition);
+            let script = script(*condition, true);
             assert!(script.starts_with("tc qdisc del dev eth0 root"), "{script}");
             assert!(script.contains("set-chain3-enabled false"), "{script}");
         }
-        assert!(!script(Condition::Online).contains("&&"));
+        assert!(script(Condition::Online, true).ends_with("; true"));
+        let old = script(Condition::Online, false);
+        assert!(!old.contains("connectivity"), "{old}");
+        assert!(old.ends_with("; true"), "{old}");
     }
 
     #[test]
     fn shaping_never_touches_adb() {
         for condition in [Condition::Slow, Condition::Lossy] {
-            let script = script(condition);
+            let script = script(condition, false);
             assert!(script.contains("match ip sport 5555 0xffff flowid 1:1"));
             assert!(script.contains("protocol arp u32 match u32 0 0 flowid 1:1"));
         }
-        let slow = script(Condition::Slow);
+        let slow = script(Condition::Slow, true);
         assert!(slow.contains("ingress prio 49001 protocol ip u32 match ip protocol 6 0xff match ip dport 5555 0xffff flowid :1"));
         assert!(!slow.contains("qdisc del dev eth0 ingress"));
     }
 
     #[test]
     fn offline_blocks_apps_instead_of_dropping_packets() {
-        let script = script(Condition::Offline);
+        let script = script(Condition::Offline, true);
         assert!(script.contains("set-chain3-enabled true"));
         assert!(script.contains("set-package-networking-enabled false"));
         assert!(!script.contains("netem"));

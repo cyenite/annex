@@ -21,7 +21,7 @@ Benchmarked an Android Studio emulator against Redroid and Waydroid on the same 
 Goal: it boots, and Android Studio sees it.
 
 - [x] `annex doctor`: kernel, binder (loaded now and at boot), Docker access, GPU, adb and its key, scrcpy, memory, default image
-- [x] `annex up`, `down`, `ls`, `rm` on Redroid images for Android 13, 14 and 15, with adb on `127.0.0.1:5600` and up
+- [x] `annex up`, `down`, `ls`, `rm` on Redroid images for Android 13, 14 and 15, with adb on `127.0.0.1:5600` and up (8.1 to 12 added in 0.8.0)
 - [x] `annex freeze` / `thaw` (about 0.1 s each)
 - [x] `annex snap save` / `snap ls` and `annex reset [--to <label>]`
 - [x] `annex show`: a screen window through scrcpy
@@ -71,6 +71,9 @@ Run the same instances on CI runners, and give test suites what a real phone giv
 - [ ] A stable device id that survives `annex rm` and recreating an instance, for backends that bind a user to their first device
 - [x] A Google services stand-in on new Android 15 instances: maps without an API key, placeholder push tokens with `annex fcm token|send`, and fused location
 - [ ] The Google services stand-in on Android 13 and 14
+- [x] Older Android: 8.1, 9, 10, 11 and 12
+- [ ] `annex net offline` before Android 15, whose shells can't drive the firewall chain
+- [ ] Simulated location before Android 12, through the older HIDL GNSS interface
 - [ ] Prepare the Google services stand-in in `annex setup`, so the first `annex up` and fresh CI runners don't wait for it
 - [ ] Choose Google services in Annex Manager's New instance dialog
 - [ ] Real push messages through Google, as an opt-in per instance

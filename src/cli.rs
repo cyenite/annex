@@ -15,7 +15,7 @@ use annex_core::redroid::Display;
     version,
     about = "Fast Android instances for Linux developers",
     long_about = "Fast Android instances for Linux developers.\n\n\
-        Instances run in container mode (as many as you like, Android 13-15, snapshots) or in \
+        Instances run in container mode (as many as you like, Android 8.1-15, snapshots) or in \
         window mode (one instance whose apps open in native desktop windows). Android Studio, \
         Flutter and adb see each one as an ordinary device."
 )]
@@ -72,7 +72,7 @@ pub enum Commands {
         /// How a new instance runs [default: container]
         #[arg(long, value_enum)]
         mode: Option<Mode>,
-        /// Android version for a new instance [default: 15]
+        /// Android version for a new instance [default: 15]; 8 means 8.1
         #[arg(long, value_enum)]
         android: Option<AndroidVersion>,
         /// Screen size and density, like 1080x2400/420 [default: 1080x2400/420]; changing it

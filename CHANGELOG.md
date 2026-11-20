@@ -4,6 +4,19 @@ All notable changes to annex are recorded here. The format follows [Keep a Chang
 
 ## Unreleased
 
+### Added
+
+- Container mode runs Android 8.1, 9, 10, 11 and 12 as well as 13 to 15: `annex up old --android 8` (or `8.1`, `9`, `10`, `11`, `12`). Every version has adb, installs, the screen window, freeze, snapshots, recordings, logs and the CI profile. App windows (`annex open`) need Android 10, simulated location Android 12, and `annex net offline` Android 15; annex says so instead of failing. Annex Manager's New instance dialog lists every version.
+
+### Fixed
+
+- Android 13 and 14 instances accept your adb key again. annex put it where only Android 15 looks, so adb showed them as `unauthorized`; each version now gets the key where its adbd reads it.
+- `annex net` with no condition, and `annex net online`, work on Android 13 and 14; they failed asking for a firewall command those versions don't have.
+
+### Changed
+
+- Container-mode instances rebuild on their next `annex up` to pick up the adb key fix; their data is kept.
+
 ## 0.7.0 - 2026-11-20
 
 ### Added

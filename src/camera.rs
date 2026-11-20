@@ -18,7 +18,6 @@ const INIT: &str = include_str!("../android/camera/annex-camera.rc");
 const MANIFEST: &str = include_str!("../android/camera/annex-camera.xml");
 const FEATURES: &str = include_str!("../android/camera/annex-camera-features.xml");
 const NO_CAMERA: &str = include_str!("../android/permissions/annex-no-camera.xml");
-const CAMERA_APP: &str = "/system/product/app/Camera2";
 const DRIVER: &str = "/vendor/bin/hw/android.hardware.camera.provider-service.annex";
 // The camera driver reads this each time an app opens a camera; it runs as cameraserver, which
 // can open a world-readable file in /data/local/tmp but not list the folder.
@@ -66,6 +65,15 @@ impl Picture {
         self.to_possible_value()
             .and_then(|value| value.get_help().map(|help| help.to_string()))
             .unwrap_or_default()
+    }
+}
+
+/// The built-in Camera app, hidden on instances without cameras.
+fn camera_app(android: AndroidVersion) -> &'static str {
+    if android.has_product_partition() {
+        "/system/product/app/Camera2"
+    } else {
+        "/system/app/Camera2"
     }
 }
 
@@ -136,7 +144,8 @@ pub fn is_supported(android: AndroidVersion, has_hardware_rendering: bool) -> bo
 }
 
 /// Writes the camera files under annex's data folder and returns what mounts them.
-pub fn setup(is_supported: bool) -> Result<Setup> {
+pub fn setup(android: AndroidVersion, has_hardware_rendering: bool) -> Result<Setup> {
+    let is_supported = is_supported(android, has_hardware_rendering);
     let folder = data_dir().join("camera").join(env!("CARGO_PKG_VERSION"));
     let files: Vec<(&str, &[u8], u32, &str)> = if is_supported {
         vec![
@@ -188,7 +197,7 @@ pub fn setup(is_supported: bool) -> Result<Setup> {
     if !is_supported {
         // The built-in Camera app crashes on an empty camera list, and apps hand photo
         // requests to it; hiding it lets them see there is nothing to take a photo with.
-        mounts.push(format!("type=tmpfs,dst={CAMERA_APP},readonly"));
+        mounts.push(format!("type=tmpfs,dst={},readonly", camera_app(android)));
     }
     let boot_arguments = if is_supported {
         vec![MINIGBM, CODEC2]
