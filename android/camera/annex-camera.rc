@@ -1,0 +1,4 @@
+service vendor.camera-annex /vendor/bin/hw/android.hardware.camera.provider-service.annex
+    class hal
+    user cameraserver
+    group audio camera input drmrpc graphics

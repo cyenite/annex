@@ -9,13 +9,13 @@ use anyhow::{Context, Result, bail};
 
 use crate::adb::Adb;
 use crate::instance::{AndroidVersion, Backend, Instance, State, UpOptions, require};
-use crate::paths::{data_dir, write_if_changed};
-use crate::{docker, gpu, location};
+use crate::play_services::{self, PlayServices};
+use crate::{camera, docker, gpu, location};
 
 const PORTS: std::ops::Range<u16> = 5600..5700;
 const BOOT_TIMEOUT: Duration = Duration::from_secs(180);
 const PULL_ATTEMPTS: u32 = 3;
-const CONTAINER_CONFIG: &str = "6";
+const CONTAINER_CONFIG: &str = "8";
 const ADB_KEYS_PATH: &str = "/product/etc/security/adb_keys";
 // adbd also trusts keys saved on the data volume ("always allow" and wireless pairings). Masking
 // both with a read-only /dev/null means only the mounted user key is ever trusted, including on
@@ -25,12 +25,6 @@ const SAVED_WIRELESS_KEYS: &str = "/data/misc/adb/adb_temp_keys.xml";
 // The simulated Bluetooth HAL listens on TCP 6111/6211/6311 on every interface, reachable by any
 // local user through the Docker bridge; masking its init script keeps it from starting.
 const BLUETOOTH_SIM_INIT: &str = "/vendor/etc/init/android.hardware.bluetooth@1.1-service.sim.rc";
-// Redroid has no camera, yet its handheld feature list declares one, so apps that trust the
-// feature fail on an empty camera list. The built-in Camera app crashes on it too, and apps hand
-// photo requests to it; hiding it lets them see there is nothing to take a photo with.
-const NO_CAMERA: &str = include_str!("../android/permissions/annex-no-camera.xml");
-const NO_CAMERA_PATH: &str = "/vendor/etc/permissions/annex-no-camera.xml";
-const CAMERA_APP: &str = "/system/product/app/Camera2";
 
 /// Screen size and density, written like scrcpy's `--new-display`: `1080x2400/420`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -90,6 +84,7 @@ pub struct Container {
     pub android: AndroidVersion,
     /// Removed with its data volume by `annex down`, for CI runs that must start clean.
     pub is_ephemeral: bool,
+    pub play_services: PlayServices,
 }
 
 impl Container {
@@ -107,6 +102,7 @@ pub fn list() -> Result<Vec<Instance>> {
         "{{.Label \"annex.config\"}}",
         "{{.Label \"annex.display\"}}",
         "{{.Label \"annex.ephemeral\"}}",
+        "{{.Label \"annex.play-services\"}}",
     ]
     .join("\t");
     let output = docker::run(&[
@@ -143,7 +139,11 @@ pub fn up(adb: &Adb, name: &str, options: UpOptions) -> Result<Instance> {
                 );
             }
             let display = options.display.unwrap_or(container.display);
-            if container.is_outdated() || display != container.display {
+            let play_services = options.play_services.unwrap_or(container.play_services);
+            check_play_services(play_services, container.android)?;
+            let is_changed =
+                display != container.display || play_services != container.play_services;
+            if container.is_outdated() || is_changed {
                 if container.config.is_empty() {
                     println!(
                         "warning: {name} ran without adb authentication, so another local user could have changed it; `annex reset {name}` gives a clean instance"
@@ -157,6 +157,7 @@ pub fn up(adb: &Adb, name: &str, options: UpOptions) -> Result<Instance> {
                     name,
                     &Container {
                         display,
+                        play_services,
                         ..container.clone()
                     },
                 )?;
@@ -172,6 +173,10 @@ pub fn up(adb: &Adb, name: &str, options: UpOptions) -> Result<Instance> {
         }
         None => {
             let android = options.android.unwrap_or(AndroidVersion::Android15);
+            let play_services = options
+                .play_services
+                .unwrap_or(PlayServices::default_for(android));
+            check_play_services(play_services, android)?;
             ensure_image(android)?;
             let container = Container {
                 port: free_port(&list()?)?,
@@ -179,6 +184,7 @@ pub fn up(adb: &Adb, name: &str, options: UpOptions) -> Result<Instance> {
                 display: options.display.unwrap_or_default(),
                 android,
                 is_ephemeral: options.is_ephemeral,
+                play_services,
             };
             create(adb, name, &container)?;
             docker::run(&["start", &container_name(name)])?;
@@ -270,6 +276,11 @@ fn parse(line: &str) -> Result<Instance> {
     // empty columns are dropped by trimming, so every column after the port is optional.
     let config = fields.get(4).copied().unwrap_or_default();
     let is_ephemeral = fields.get(6).is_some_and(|value| *value == "1");
+    let play_services = match fields.get(7).copied().unwrap_or_default() {
+        "" => PlayServices::None,
+        raw => PlayServices::from_label(raw)
+            .with_context(|| format!("bad Google services label {raw} on {name}"))?,
+    };
     let display = match fields.get(5).copied().unwrap_or_default() {
         "" => Display::default(),
         raw => raw
@@ -296,22 +307,24 @@ fn parse(line: &str) -> Result<Instance> {
             display,
             android,
             is_ephemeral,
+            play_services,
         }),
     })
 }
 
 fn create(adb: &Adb, name: &str, container: &Container) -> Result<()> {
-    let gpu_mode = if gpu::has_hardware_rendering() {
-        "host"
-    } else {
-        "guest"
-    };
     let Container {
         port,
         display,
         android,
         ..
     } = container;
+    let has_hardware_rendering = gpu::has_hardware_rendering();
+    let gpu_mode = if has_hardware_rendering {
+        "host"
+    } else {
+        "guest"
+    };
     let public_key = adb.public_key()?;
     let container_name = container_name(name);
     let dpi = format!("androidboot.redroid_dpi={}", display.dpi);
@@ -334,9 +347,25 @@ fn create(adb: &Adb, name: &str, container: &Container) -> Result<()> {
     let bluetooth_mask = mask(BLUETOOTH_SIM_INIT);
     let saved_keys_mask = mask(SAVED_ADB_KEYS);
     let wireless_keys_mask = mask(SAVED_WIRELESS_KEYS);
-    let camera_app_mask = format!("type=tmpfs,dst={CAMERA_APP},readonly");
-    let no_camera_mount = no_camera_mount().context("could not write the camera settings")?;
+    let camera = camera::setup(camera::is_supported(*android, has_hardware_rendering))
+        .context("could not write the camera's files")?;
     let gnss_mounts = location::gnss_mounts().context("could not write the GPS driver's files")?;
+    // A stand-in that can't be downloaded or prepared mustn't keep the instance from starting. The
+    // label records what the instance got, so `ls` stays truthful and asking again retries.
+    let (play_services, play_services_mounts) = match container.play_services {
+        PlayServices::None => (PlayServices::None, vec![]),
+        PlayServices::StandIn => match play_services::mounts(*android) {
+            Ok(mounts) => (PlayServices::StandIn, mounts),
+            Err(error) => {
+                println!(
+                    "warning: {name} starts without the Google services stand-in: {error:#}\n\
+                     `annex up {name} --play-services stand-in` tries again"
+                );
+                (PlayServices::None, vec![])
+            }
+        },
+    };
+    let play_services_label = format!("annex.play-services={}", play_services.label());
     // Redroid cannot boot without --privileged (its init needs writable sysfs and cgroups), so the
     // container is root-equivalent: adbd must only accept the user's key, and nothing else may listen.
     let mut args = vec![
@@ -358,6 +387,8 @@ fn create(adb: &Adb, name: &str, container: &Container) -> Result<()> {
         &display_label,
         "--label",
         &ephemeral_label,
+        "--label",
+        &play_services_label,
         "--volume",
         &data_mount,
         "--volume",
@@ -368,20 +399,23 @@ fn create(adb: &Adb, name: &str, container: &Container) -> Result<()> {
         &saved_keys_mask,
         "--mount",
         &wireless_keys_mask,
-        "--mount",
-        &camera_app_mask,
-        "--mount",
-        &no_camera_mount,
         "--publish",
         &port_binding,
     ];
-    for gnss_mount in &gnss_mounts {
-        args.extend(["--mount", gnss_mount]);
+    for mount in gnss_mounts
+        .iter()
+        .chain(&camera.mounts)
+        .chain(&play_services_mounts)
+    {
+        args.extend(["--mount", mount]);
     }
     args.extend([
         android.image(),
         "androidboot.use_memfd=true",
         "ro.adb.secure=1",
+        // lmkd reads the host's swap through the shared kernel, so with the default 10% it kills
+        // even the launcher whenever the host's swap runs low, leaving the screen black.
+        "ro.lmk.swap_free_low_percentage=0",
         &model,
         "ro.product.brand=Annex",
         "ro.product.manufacturer=Annex",
@@ -390,6 +424,7 @@ fn create(adb: &Adb, name: &str, container: &Container) -> Result<()> {
         &height,
         &dpi,
     ]);
+    args.extend(&camera.boot_arguments);
     docker::run(&args).map(drop)
 }
 
@@ -410,6 +445,16 @@ fn ensure_image(android: AndroidVersion) -> Result<()> {
     }
     Err(last_error.expect("at least one pull attempt"))
         .with_context(|| format!("could not download the Android {} image", android.label()))
+}
+
+fn check_play_services(play_services: PlayServices, android: AndroidVersion) -> Result<()> {
+    if play_services == PlayServices::StandIn && !play_services::is_supported(android) {
+        bail!(
+            "the Google services stand-in needs Android 15, not {}",
+            android.label()
+        );
+    }
+    Ok(())
 }
 
 fn free_port(instances: &[Instance]) -> Result<u16> {
@@ -475,20 +520,8 @@ fn model_name(name: &str, android: AndroidVersion) -> String {
     format!("Annex_{}_{}", words.join("_"), android.label())
 }
 
-fn mask(path: &str) -> String {
+pub(crate) fn mask(path: &str) -> String {
     format!("type=bind,src=/dev/null,dst={path},readonly")
-}
-
-fn no_camera_mount() -> Result<String> {
-    let path = data_dir()
-        .join("permissions")
-        .join(env!("CARGO_PKG_VERSION"))
-        .join("annex-no-camera.xml");
-    write_if_changed(&path, NO_CAMERA.as_bytes(), 0o644)?;
-    Ok(format!(
-        "type=bind,src={},dst={NO_CAMERA_PATH},readonly",
-        path.display()
-    ))
 }
 
 fn volume_name(name: &str) -> String {
@@ -508,7 +541,7 @@ mod tests {
 
     #[test]
     fn parses_a_current_container() {
-        let instance = parse("running\tpixel\t15\t5600\t6\t720x1280/320").unwrap();
+        let instance = parse("running\tpixel\t15\t5600\t8\t720x1280/320").unwrap();
         assert_eq!(instance.name, "pixel");
         assert_eq!(instance.serial, "127.0.0.1:5600");
         assert_eq!(instance.state, State::Running);
@@ -542,6 +575,16 @@ mod tests {
         assert!(instance.is_ephemeral());
         let kept = parse("running\tci\t15\t5602\t6\t1080x2400/420\t0").unwrap();
         assert!(!kept.is_ephemeral());
+    }
+
+    #[test]
+    fn reads_the_google_services_label() {
+        let line = "running\tmaps\t15\t5603\t8\t1080x2400/420\t0";
+        let instance = parse(&format!("{line}\tstand-in")).unwrap();
+        assert_eq!(container(&instance).play_services, PlayServices::StandIn);
+        let older = parse(line).unwrap();
+        assert_eq!(container(&older).play_services, PlayServices::None);
+        assert!(parse(&format!("{line}\tgapps")).is_err());
     }
 
     #[test]

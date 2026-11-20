@@ -266,7 +266,7 @@ fn build_from_source() -> Result<PathBuf> {
     Ok(installed)
 }
 
-fn download(url: &str, path: &Path) -> Result<()> {
+pub(crate) fn download(url: &str, path: &Path) -> Result<()> {
     stdout_within(
         Command::new("curl")
             .args([
@@ -274,6 +274,14 @@ fn download(url: &str, path: &Path) -> Result<()> {
                 "--silent",
                 "--show-error",
                 "--location",
+                // A stalled connection otherwise waits out the whole timeout; give up on one
+                // that moves less than 1 KB/s for 30 s, and start again.
+                "--speed-limit",
+                "1024",
+                "--speed-time",
+                "30",
+                "--retry",
+                "3",
                 "--output",
             ])
             .arg(path)
@@ -284,7 +292,7 @@ fn download(url: &str, path: &Path) -> Result<()> {
     .map(drop)
 }
 
-fn sha256(path: &Path) -> Result<String> {
+pub(crate) fn sha256(path: &Path) -> Result<String> {
     let output = stdout_within(Command::new("sha256sum").arg(path), DOWNLOAD_TIMEOUT)?;
     parse_checksum(&output).context("unexpected sha256sum output")
 }

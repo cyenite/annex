@@ -68,6 +68,99 @@ Copyright (C) The Android Open Source Project
 Copyright (c) the LLVM Project contributors
 ```
 
+## Downloaded by annex: the Google services stand-in
+
+annex does not include these. When an Android 15 instance first needs the Google services
+stand-in, annex downloads them from their projects, checks each against a pinned SHA-256, and
+builds the stand-in on your computer; the modified microG it makes is not distributed.
+
+### microG
+
+The stand-in is microG GmsCore and its Companion, patched by annex for offline push tokens and
+keyless maps, and re-signed with a key made on your computer.
+
+- Project: https://github.com/microg/GmsCore
+- License: Apache License 2.0
+
+```
+Copyright (C) microG Project Team
+```
+
+### Apktool
+
+annex decodes and rebuilds microG and Android's framework with Apktool.
+
+- Project: https://github.com/iBotPeaches/Apktool
+- License: Apache License 2.0
+
+```
+Copyright (C) 2010 Ryszard Wiśniewski <brut.alll@gmail.com>
+Copyright (C) 2010 Connor Tumbleson <connor.tumbleson@gmail.com>
+```
+
+### apksig
+
+annex signs the stand-in with the Android Open Source Project's apksig library.
+
+- Project: https://android.googlesource.com/platform/tools/apksig
+- License: Apache License 2.0
+
+```
+Copyright (C) The Android Open Source Project
+```
+
+### Eclipse Temurin
+
+Apktool, apksig and annex's signer run in the Eclipse Temurin Java runtime container image.
+
+- Project: https://adoptium.net
+- License: GNU General Public License version 2 with the Classpath Exception
+
+### Map data
+
+The stand-in draws maps from OpenFreeMap's tiles in the OpenMapTiles schema, made from
+OpenStreetMap data. Maps show this attribution in their corner.
+
+- OpenFreeMap: https://openfreemap.org
+- OpenMapTiles: https://openmaptiles.org, schema under CC-BY 4.0
+- OpenStreetMap data: https://www.openstreetmap.org/copyright, © OpenStreetMap contributors,
+  Open Database License
+
+## Included in annex: the Google services stand-in's patches
+
+annex embeds the code it adds to the stand-in and to Android's framework
+(`android/framework/AnnexSignatures.smali`, `android/play-services/AnnexPush.smali`) and a small
+APK signer (`android/play-services/annex-sign.jar`). Their source is annex's own; the signer runs
+against apksig, which annex downloads rather than includes.
+
+## Included in annex: the camera driver
+
+annex embeds a camera driver (`android/camera/`) that it mounts into Android 15 container-mode
+instances. Its source is annex's own; the binary also contains binder interface code generated
+from, and headers and the camera metadata library (`camera_metadata.c`) taken from, the Android
+Open Source Project, the stb_image_write JPEG encoder, and the LLVM C++ standard library, linked
+statically.
+
+- Android Open Source Project (`android.hardware.camera.*` interfaces, binder NDK headers,
+  `system/media/camera`): https://source.android.com, Apache License 2.0
+
+```
+Copyright (C) The Android Open Source Project
+```
+
+- stb_image_write by Sean Barrett: https://github.com/nothings/stb, MIT License (or public
+  domain, at your choice)
+
+```
+Copyright (c) 2017 Sean Barrett
+```
+
+- LLVM libc++: https://libcxx.llvm.org, Apache License 2.0 with LLVM Exceptions
+
+```
+Copyright (c) the LLVM Project contributors
+```
+
 ## Rust crates compiled into annex
 
 The annex and annex-manager binaries link the crates below (annex-manager adds the GTK bindings). Where a crate offers a choice of licenses, annex uses it

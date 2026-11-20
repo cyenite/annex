@@ -10,7 +10,7 @@ A Linux developer runs `annex up`, gets an Android device in about 20 seconds, a
 - An instance is closed to other local users: only your adb key opens it.
 - The instance feels like part of the desktop: shared clipboard, files and notifications, and app windows of its own.
 
-Out of scope: Google Play and Play Integrity. Banking apps and some games need a real device or an emulator.
+Out of scope: Google Play itself and Play Integrity. A Google services stand-in covers maps, push messages and fused location (Phase 5); banking apps and some games still need a real device or an emulator.
 
 ## Phase 0: prove the speed (done)
 
@@ -65,9 +65,15 @@ Run the same instances on CI runners, and give test suites what a real phone giv
 
 - [x] A CI profile: `annex up --ephemeral --wait-boot --timezone --locale --animations off`, `annex serial`, `annex ls --json`, `annex doctor --json`, `annex setup --ci`, and container-aware `doctor`/`setup` for LXD runners
 - [x] Network conditions: `annex net <name> online|offline|slow|lossy`
-- [ ] A virtual camera that apps see through Camera2, fed from an image or a video
+- [x] A virtual camera that apps see through Camera2: a back and a front camera filming a drawn picture, chosen per instance with `annex camera` (landscape, city, desk or test chart; Android 15, hardware rendering)
+- [ ] Feed the camera from an image or a video of your choice, such as a QR code to scan
 - [x] Evidence capture: `annex record` (screen video without a time limit) and `annex logs` (logcat to a file)
 - [ ] A stable device id that survives `annex rm` and recreating an instance, for backends that bind a user to their first device
+- [x] A Google services stand-in on new Android 15 instances: maps without an API key, placeholder push tokens with `annex fcm token|send`, and fused location
+- [ ] The Google services stand-in on Android 13 and 14
+- [ ] Prepare the Google services stand-in in `annex setup`, so the first `annex up` and fresh CI runners don't wait for it
+- [ ] Choose Google services in Annex Manager's New instance dialog
+- [ ] Real push messages through Google, as an opt-in per instance
 
 ## Next
 
