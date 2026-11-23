@@ -85,7 +85,7 @@ Commands that act on one instance take its name. Leave the name out to mean `def
 
 ```sh
 annex up                                # create or start `default` (Android 15), open its window
-annex up old --android 13               # another instance, on Android 13
+annex up old --android 8                # another instance, on Android 8.1
 annex up tablet --display 1600x2560/320 # screen size and density
 annex ls                                # list instances
 annex down old                          # stop; data is kept
@@ -93,6 +93,20 @@ annex rm old                            # delete the instance and its data
 ```
 
 Instances listen for adb on `127.0.0.1:5600` and up, outside the 5555-5585 range that adb scans for emulators. Changing `--display` on an existing instance rebuilds it and keeps its data.
+
+### Android versions
+
+Container mode runs Android 8.1 (`--android 8`), 9, 10, 11, 12, 13, 14 and 15, the default, so you can test an app down to its `minSdkVersion`. Each version downloads its own image the first time. Everything in this README works on every version except:
+
+| | 8.1, 9 | 10, 11 | 12 | 13, 14 | 15 |
+|---|---|---|---|---|---|
+| App windows (`annex open`) | no: `annex show` instead | yes | yes | yes | yes |
+| Simulated location (`annex location`) | no | no | yes | yes | yes |
+| `annex net offline` (`slow` and `lossy` work everywhere) | no | no | no | no | yes |
+| Cameras (`annex camera`) | no camera | no camera | no camera | no camera | with hardware rendering |
+| [Google services](#google-services) stand-in | no | no | no | no | yes |
+
+Where annex can't simulate location, apps see Android's own GPS, which stays put.
 
 ### Freeze, snapshots and reset
 
@@ -121,7 +135,7 @@ To target a specific instance, put its name first: `annex install pixel app-debu
 
 ### Location
 
-Apps see GPS location, reported through Android's own GPS service like a real receiver, so it isn't marked as a mock location. An instance starts at the Android emulator's default position; move it, or let it follow this computer:
+Apps see GPS location, reported through Android's own GPS service like a real receiver, so it isn't marked as a mock location (Android 12 and later; see [Android versions](#android-versions)). An instance starts at the Android emulator's default position; move it, or let it follow this computer:
 
 ```sh
 annex location                          # where the instance is
@@ -134,6 +148,45 @@ annex location default                  # back to the default position
 To pin an exact spot, right-click it in Google Maps and click its coordinates to copy them, or copy the place's link; `annex location` takes either. A place link puts the instance on the place's pin.
 
 `host` is opt-in per instance and needs the desktop bridge and your desktop's Location Services; GNOME asks once whether Annex may use your location. A computer without GPS finds itself by looking up nearby Wi-Fi networks, and where the lookup service doesn't know them it guesses from the IP address, which can be tens of kilometers off. `annex location` shows how close the computer's position is; for anything that depends on being at an address, pin the spot instead. The position is only shared with instances you set to `host` from this computer; that choice is kept here, not in the instance, and `annex rm` withdraws it.
+
+### Camera
+
+Android 15 instances on a computer with hardware rendering have a back and a front camera, like a phone. Both film a drawn picture, so apps can show a camera preview, take photos (upright, with the orientation in their EXIF data), record video and analyse frames. Photo requests from apps (`IMAGE_CAPTURE`) open the built-in Camera app. The cameras have a fixed focus and no flash or zoom.
+
+The picture is drawn sharp at every size, and you choose it per instance:
+
+```sh
+annex camera                            # list the pictures, with the current one marked
+annex camera city                       # a city at night: lit windows, sharp and high-contrast
+annex camera desk                       # a printed page on a desk, for document and text apps
+annex camera chart                      # a test chart: colour bars, a focus star, a grey ramp
+annex camera landscape                  # back to the default, a soft landscape at dusk
+```
+
+Apps see a new picture the next time they open a camera. Annex Manager has the same choice on an instance's page.
+
+Instances before Android 15, and instances on a computer without hardware rendering, report that they have no camera, like a phone without one.
+
+### Google services
+
+New Android 15 instances come with a stand-in for Google Play services, an open-source reimplementation, so apps that use Play services libraries find it and work:
+
+- **Maps.** The Maps SDK (and `google_maps_flutter`) draws maps, with markers, shapes and map styling, from OpenFreeMap's map data. It needs no API key, and the app's own key is never checked, so a wrong or missing key won't show up here. Maps look like Google's but aren't Google's tiles, and every map type shows the street map: there is no satellite view.
+- **Push messages.** Firebase Cloud Messaging gives each app a token, and `annex fcm` sends it test messages.
+- **Fused location.** `FusedLocationProviderClient` reports annex's GPS position (see [Location](#location)), not marked as a mock location.
+
+Push tokens are placeholders made on the instance and never registered with Google, so a server that sends to one gets FCM's "unregistered" error. To see how an app handles a push, send one with annex:
+
+```sh
+annex fcm token com.example.app         # the token the app was given
+annex fcm send com.example.app --title "Order ready" --body "Collect at gate 3" --data orderId=42
+```
+
+`send` delivers the message the way Play services delivers a real one, so the app's `onMessageReceived` (or `FirebaseMessaging.onMessage`) runs; with a title or body it shows as a notification while the app is in the background. The app must have asked for a token first, which most do at startup.
+
+The first instance downloads the stand-in (about 110 MB, plus a Java build image of about 290 MB on disk) and prepares it in about two minutes; later instances reuse it. It sends nothing to Google. `annex up <name> --play-services none` makes an instance without it, like a phone sold without Google services. On an existing instance, `--play-services` rebuilds its container and keeps its data. Instances created before 0.7.0, and instances before Android 15, have none.
+
+Not included: the Play Store and in-app billing, and Play Integrity and SafetyNet, so apps that require them (banking, some games) still won't run. Google sign-in needs a Google account added in the stand-in's settings and hasn't been tested. Firebase App Check works with its debug provider.
 
 ### CI and scripts
 
@@ -155,6 +208,7 @@ annex down e2e                          # an ephemeral instance is deleted with 
 - Without a desktop session (SSH, CI), `annex up` opens no window and adds no app launcher entry; ephemeral instances never get one.
 - In a container (`systemd-detect-virt --container`), `annex doctor` and `annex setup` say what to do on the host: the container shares the host's kernel, so the host loads binder (`sudo modprobe binder_linux`, and at boot through /etc/modules-load.d/), and the container must be privileged and nested. The host also loads the traffic shaping modules if `annex net slow` and `lossy` are needed and its kernel doesn't load them on demand.
 - `setup --ci` needs root or passwordless sudo, and exits non-zero when something is left for a person to do.
+- On a runner that starts empty, the first Android 15 instance spends about two minutes preparing the [Google services](#google-services) stand-in. Cache `~/.local/share/annex/play-services/` between runs, or pass `--play-services none` if your tests don't need it.
 
 ### Network conditions
 
@@ -221,7 +275,7 @@ annex open desk com.example.app   # opens in a native desktop window
 | | Container mode (default) | Window mode |
 |---|---|---|
 | Instances | as many as you like | one |
-| Android versions | 13, 14, 15 | from its system image |
+| Android versions | 8.1 to 15 | from its system image |
 | App windows | `annex open`, mirrored | native desktop windows |
 | Freeze and thaw | yes | yes |
 | Snapshots and reset | yes | no |
@@ -237,16 +291,18 @@ Container-mode instances run as privileged containers, so each one is root-equiv
 - Nothing else listens: the simulated Bluetooth service, which opens network ports, is disabled.
 - Snapshots, which contain every app's private data, are readable only by you.
 - The bridge never logs clipboard contents, only sizes.
+- The Google services stand-in may report Google's certificate only for the packages annex installs into Android's read-only system folders, so no app you install can pose as Google Play services. It is signed with a key made on this computer, so nobody else can replace it with an update.
 
 Anyone in the `docker` group can still open a shell in an instance, as with any container. See [SECURITY.md](SECURITY.md) to report a vulnerability.
 
 ## Limits
 
-- **No Google Play.** Apps that need Play Integrity (banking, some games) will not run. Use a real device or an emulator for those. Firebase Cloud Messaging can't register either, so push notifications from a server never arrive; notifications an app posts itself still show.
+- **No Google Play.** The [Google services](#google-services) stand-in covers maps, push messages and fused location, but not the Play Store, billing or Play Integrity: apps that need Play Integrity (banking, some games) will not run. Use a real device or an emulator for those. Push tokens are placeholders, so a server can't push to an instance; `annex fcm send` delivers test messages instead.
 - **Location is simulated.** Positions come from annex, not a GPS receiver (see [Location](#location)). There is GPS location but no network location.
 - **No Bluetooth.** Instances can't reach this computer's Bluetooth adapter yet.
-- **No camera.** Instances report that they have no camera, like a phone without one, so apps can't take photos or scan codes on them yet. An app that assumes every phone has a camera needs to handle the case where it finds none.
+- **The camera films a fixed picture.** It can't show your webcam, an image of your choice or a QR code yet (see [Camera](#camera)), and instances before Android 15, or without hardware rendering, have no camera at all.
 - **No Android 16 yet.** Its system services need a kernel feature (ashmem) that mainline kernels no longer have.
+- **Older versions do less.** Android 8.1 to 14 have no cameras, no Google services stand-in and no `annex net offline`; 8.1 to 11 also have no simulated location, and 8.1 and 9 no per-app windows (see [Android versions](#android-versions)). The desktop bridge's clipboard and notifications are only tested on Android 15.
 - **x86_64 Linux only** for now.
 
 ## Troubleshooting
@@ -260,13 +316,18 @@ Anyone in the `docker` group can still open a shell in an instance, as with any 
 | A Flutter debug build crashes on launch | The APK was built for a phone (arm64). Let `flutter run` build for the instance, which is x86_64. |
 | Window mode won't freeze, saying its state is out of sync | Run `annex setup --repair`. |
 | An app says location is off although it's on in Settings, or rejects it as a mock location | Run `annex up` for that instance: an instance that was already running when you updated annex gets its GPS on its next `annex up` (data kept). An app that recorded mock locations before may need its data cleared. |
-| Opening the camera crashes an app, or the Camera app stops | Run `annex up` for that instance: an instance that was already running when you updated annex reports that it has no camera from its next `annex up` (data kept). |
+| An app finds no camera, or opening the camera crashes it | Run `annex up` for that instance: an instance that was already running when you updated annex gets its cameras from its next `annex up` (data kept). Instances before Android 15, and instances without hardware rendering, have no camera. |
+| The screen goes black except the status bar, while the computer is short on memory | Press Home, or run `adb -s <serial> shell input keyevent HOME`. Then run `annex up` for that instance: one that was already running when you updated annex stops closing apps over the computer's swap from its next `annex up` (data kept). |
+| An Android 13 or 14 instance shows as `unauthorized` in adb | Run `annex up` for it: instances made before 0.8.0 put your adb key where those versions don't look. The rebuild keeps their data. |
+| An app says Google Play services is missing, or its map is blank | The instance has no stand-in: it was created before 0.7.0, runs Android 14 or older, or was made with `--play-services none`. On Android 15, run `annex up <name> --play-services stand-in` (data kept). |
+| `annex up` warns that the instance starts without the Google services stand-in | Preparing it failed, usually for want of a network on first use. Fix that and run `annex up <name> --play-services stand-in`. |
+| `annex fcm token` says the app has no push token | The app hasn't asked for one yet. Open it once; most apps ask at startup. |
 | No annex menu in the panel | On GNOME, enable the AppIndicator extension; `annex doctor` checks for it. |
 | Dozens of small drives fill the dock while an instance runs | Run `annex setup`. Android mounts each of its system modules as a disk image, and setup tells your desktop to ignore them. |
 
 ## How it works
 
-annex is a thin, stateless layer. A container-mode instance is a container named `annex-<name>` with a data volume; its port, Android version and display live in the container's labels, so there is no state file to drift. Freezing pauses the container's processes in place. Snapshots stream the data volume out of the frozen container. The desktop bridge runs a small helper on each instance and speaks its control protocol to share the clipboard, and it watches Android's notification service for new notifications.
+annex is a thin, stateless layer. A container-mode instance is a container named `annex-<name>` with a data volume; its port, Android version and display live in the container's labels, so there is no state file to drift. Freezing pauses the container's processes in place. Snapshots stream the data volume out of the frozen container. The Google services stand-in is prepared on your computer: annex downloads it, patches it for offline push tokens and keyless maps, signs it with a key of its own, and patches a copy of the image's framework so apps accept it, all in a throwaway Java container; the results are cached and mounted read-only into each instance. The desktop bridge runs a small helper on each instance and speaks its control protocol to share the clipboard, and it watches Android's notification service for new notifications.
 
 annex builds on several open-source projects; `annex about --licenses` and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) list them with their licenses. The plan and what comes next: [ROADMAP.md](ROADMAP.md). Changes by version: [CHANGELOG.md](CHANGELOG.md).
 

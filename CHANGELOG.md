@@ -4,6 +4,41 @@ All notable changes to annex are recorded here. The format follows [Keep a Chang
 
 ## Unreleased
 
+## 0.8.0 - 2026-11-20
+
+### Added
+
+- Container mode runs Android 8.1, 9, 10, 11 and 12 as well as 13 to 15: `annex up old --android 8` (or `8.1`, `9`, `10`, `11`, `12`). Every version has adb, installs, the screen window, freeze, snapshots, recordings, logs and the CI profile. App windows (`annex open`) need Android 10, simulated location Android 12, and `annex net offline` Android 15; annex says so instead of failing. Annex Manager's New instance dialog lists every version.
+
+### Fixed
+
+- Android 13 and 14 instances accept your adb key again. annex put it where only Android 15 looks, so adb showed them as `unauthorized`; each version now gets the key where its adbd reads it.
+- `annex net` with no condition, and `annex net online`, work on Android 13 and 14; they failed asking for a firewall command those versions don't have.
+
+### Changed
+
+- Container-mode instances rebuild on their next `annex up` to pick up the adb key fix; their data is kept.
+
+## 0.7.0 - 2026-11-20
+
+### Added
+
+- Android 15 instances have a back and a front camera. Both film a drawn picture, so apps can show a camera preview, take photos, record video and analyse frames instead of finding no camera, and the built-in Camera app is back for apps that ask it to take a photo. Instances need hardware rendering for it; Android 13 and 14 instances, and instances without hardware rendering, still report no camera.
+- `annex camera [NAME] [PICTURE]` chooses what an instance's cameras film: a soft landscape at dusk (the default), a city at night, a printed page on a desk, or a test chart, all drawn sharp at every size. With no picture it lists them. Annex Manager has the same choice on an instance's page.
+
+- A stand-in for Google Play services on new Android 15 instances, so apps that use Play services libraries find it. The Maps SDK draws maps from OpenFreeMap with no API key, Firebase Cloud Messaging gives apps placeholder push tokens, and `FusedLocationProviderClient` reports the instance's GPS position. The first instance downloads and prepares it in about two minutes; nothing is sent to Google. `annex up --play-services none` makes an instance without it, and `--play-services stand-in` adds it to an existing Android 15 instance (data kept).
+- `annex fcm [NAME] token <PACKAGE>` prints the push token an app was given, and `annex fcm [NAME] send <PACKAGE>` delivers a test message to it, with an optional notification title and body and `--data KEY=VALUE` pairs, the way Play services delivers a real one.
+- `annex ls` and `annex ls --json` show whether each instance has the Google services stand-in.
+
+### Fixed
+
+- Instances no longer go black when the computer runs low on swap. Android's memory manager inside an instance sees the computer's swap, so when it ran low it closed apps, the home screen included, and the screen stayed black until you pressed Home. It no longer closes apps over the computer's swap.
+
+### Changed
+
+- Container-mode instances rebuild on their next `annex up` to pick up the memory setting and the cameras; their data is kept. Existing instances don't get the Google services stand-in unless you ask for it.
+- Downloads (`annex update`, the Google services stand-in) give up on a stalled connection after 30 s and retry, instead of waiting out the whole timeout.
+
 ## 0.6.0 - 2026-11-03
 
 ### Added

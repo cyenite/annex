@@ -5,14 +5,19 @@ use annex_core::adb::Adb;
 use annex_core::instance::{self, AndroidVersion, Mode, UpOptions};
 use annex_core::redroid::Display;
 use annex_core::{launcher, window};
+use clap::ValueEnum;
 
 use crate::app::App;
 
-const ANDROID_CHOICES: [(&str, AndroidVersion); 3] = [
-    ("Android 15", AndroidVersion::Android15),
-    ("Android 14", AndroidVersion::Android14),
-    ("Android 13", AndroidVersion::Android13),
-];
+/// Every Android version container mode runs, newest first, so the default is the first choice.
+fn android_choices() -> Vec<AndroidVersion> {
+    AndroidVersion::value_variants()
+        .iter()
+        .rev()
+        .copied()
+        .collect()
+}
+
 const MODE_CHOICES: [(&str, Mode, &str); 2] = [
     (
         "Container",
@@ -47,8 +52,10 @@ impl NewInstanceDialog {
             .build();
         let android = adw::ComboRow::builder()
             .title("Android version")
-            .model(&gtk::StringList::new(
-                &ANDROID_CHOICES.map(|(label, _)| label),
+            .model(&gtk::StringList::from_iter(
+                android_choices()
+                    .iter()
+                    .map(|android| format!("Android {}", android.label())),
             ))
             .build();
         let screen = adw::EntryRow::builder()
@@ -112,7 +119,7 @@ impl NewInstanceDialog {
             let dialog = dialog.clone();
             create.connect_clicked(move |_| {
                 let chosen_mode = MODE_CHOICES[mode.selected() as usize].1;
-                let chosen_android = ANDROID_CHOICES[android.selected() as usize].1;
+                let chosen_android = android_choices()[android.selected() as usize];
                 let request = Request {
                     name: name.text().trim().to_string(),
                     mode: chosen_mode,

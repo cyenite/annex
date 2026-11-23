@@ -1,9 +1,9 @@
 use std::fs;
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 
 use crate::adb::{Adb, validate_package};
-use crate::instance::{Backend, Instance};
+use crate::instance::{AndroidVersion, Backend, Instance};
 use crate::scrcpy::Scrcpy;
 use crate::{launcher, waydroid};
 
@@ -60,10 +60,21 @@ pub fn open(adb: &Adb, instance: &Instance, package: &str) -> Result<()> {
     validate_package(package)?;
     match &instance.backend {
         Backend::Redroid(container) => {
+            if container.android < AndroidVersion::Android10 {
+                bail!(
+                    "{} runs Android {}: apps get windows of their own from Android 10, which added virtual displays. `annex show {}` shows the whole screen",
+                    instance.name,
+                    container.android.label(),
+                    instance.name
+                );
+            }
             let scrcpy = Scrcpy::locate()?;
             // Redroid's shell user lacks ADD_TRUSTED_DISPLAY, which scrcpy needs to create the
-            // app's virtual display on Android 13 and later; root has it.
-            if !adb.is_root(&instance.serial) {
+            // app's virtual display on Android 13 and later; root has it. Before 13 the shell
+            // user may, and as root scrcpy fails to start the app ("packageName must match the
+            // calling uid").
+            let needs_root = container.android >= AndroidVersion::Android13;
+            if needs_root && !adb.is_root(&instance.serial) {
                 println!(
                     "enabling app windows on {} (adb reconnects once)",
                     instance.name

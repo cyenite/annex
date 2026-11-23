@@ -10,7 +10,7 @@ use clap::ValueEnum;
 
 use crate::adb::Adb;
 use crate::docker;
-use crate::instance::{self, Backend, Instance};
+use crate::instance::{self, AndroidVersion, Backend, Instance};
 use crate::redroid::{self, container_name};
 
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(15);
@@ -143,10 +143,15 @@ pub fn apply(adb: &Adb, instance: &Instance, preferences: &Preferences) -> Resul
 
 fn set_timezone(adb: &Adb, instance: &Instance, timezone: &TimeZone) -> Result<()> {
     let serial = &instance.serial;
-    let command = format!(
-        "settings put global auto_time_zone 0 && cmd alarm set-timezone {}",
-        timezone.0
-    );
+    // Android 8.1 has no `cmd alarm`; there, the alarm service's setTimeZone is binder call 3,
+    // which only the system user may make.
+    let set = match &instance.backend {
+        Backend::Redroid(container) if container.android == AndroidVersion::Android8 => {
+            format!("su 1000 service call alarm 3 s16 {}", timezone.0)
+        }
+        _ => format!("cmd alarm set-timezone {}", timezone.0),
+    };
+    let command = format!("settings put global auto_time_zone 0 && {set}");
     adb.shell(serial, &command, COMMAND_TIMEOUT)?;
     // Android falls back to GMT for a zone its database doesn't know, without an error.
     let current = adb.shell(serial, "getprop persist.sys.timezone", COMMAND_TIMEOUT)?;

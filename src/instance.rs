@@ -5,6 +5,7 @@ use anyhow::{Context, Result, bail};
 use clap::ValueEnum;
 
 use crate::adb::Adb;
+use crate::play_services::PlayServices;
 use crate::redroid::{self, Container, Display};
 use crate::{location, waydroid};
 
@@ -12,8 +13,20 @@ const READY_PROBE: &str = "getprop sys.boot_completed; pm path android";
 const READY_TIMEOUT: Duration = Duration::from_secs(120);
 const READY_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+/// The Android versions container mode runs, oldest first: declaration order is age, so `<` and
+/// `>=` compare versions. Each is a Redroid image; 8.1 is the oldest one published.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
 pub enum AndroidVersion {
+    #[value(name = "8.1", alias = "8")]
+    Android8,
+    #[value(name = "9")]
+    Android9,
+    #[value(name = "10")]
+    Android10,
+    #[value(name = "11")]
+    Android11,
+    #[value(name = "12")]
+    Android12,
     #[value(name = "13")]
     Android13,
     #[value(name = "14")]
@@ -25,6 +38,11 @@ pub enum AndroidVersion {
 impl AndroidVersion {
     pub fn label(self) -> &'static str {
         match self {
+            Self::Android8 => "8.1",
+            Self::Android9 => "9",
+            Self::Android10 => "10",
+            Self::Android11 => "11",
+            Self::Android12 => "12",
             Self::Android13 => "13",
             Self::Android14 => "14",
             Self::Android15 => "15",
@@ -33,6 +51,11 @@ impl AndroidVersion {
 
     pub fn image(self) -> &'static str {
         match self {
+            Self::Android8 => "redroid/redroid:8.1.0-latest",
+            Self::Android9 => "redroid/redroid:9.0.0-latest",
+            Self::Android10 => "redroid/redroid:10.0.0-latest",
+            Self::Android11 => "redroid/redroid:11.0.0-latest",
+            Self::Android12 => "redroid/redroid:12.0.0-latest",
             Self::Android13 => "redroid/redroid:13.0.0-latest",
             Self::Android14 => "redroid/redroid:14.0.0-latest",
             Self::Android15 => "redroid/redroid:15.0.0-latest",
@@ -44,6 +67,12 @@ impl AndroidVersion {
             .iter()
             .copied()
             .find(|version| version.label() == label)
+    }
+
+    /// Android 10 added the product partition, where the bundled apps moved; before it they live
+    /// in `/system/app`.
+    pub fn has_product_partition(self) -> bool {
+        self >= Self::Android10
     }
 }
 
@@ -68,7 +97,7 @@ impl State {
 /// Waydroid. User-facing text names the mode, never the project behind it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
 pub enum Mode {
-    /// Any number of instances, Android 13-15, snapshots and reset
+    /// Any number of instances, Android 8.1-15, snapshots and reset
     #[default]
     Container,
     /// One instance whose apps open in native desktop windows
@@ -118,6 +147,14 @@ impl Instance {
         }
     }
 
+    /// Google Play services on a container-mode instance; window mode's come from its image.
+    pub fn play_services(&self) -> Option<PlayServices> {
+        match &self.backend {
+            Backend::Redroid(container) => Some(container.play_services),
+            Backend::Waydroid { .. } => None,
+        }
+    }
+
     pub fn is_ephemeral(&self) -> bool {
         matches!(&self.backend, Backend::Redroid(container) if container.is_ephemeral)
     }
@@ -138,6 +175,7 @@ pub struct UpOptions {
     pub mode: Option<Mode>,
     pub display: Option<Display>,
     pub android: Option<AndroidVersion>,
+    pub play_services: Option<PlayServices>,
     pub is_ephemeral: bool,
 }
 
@@ -197,6 +235,9 @@ pub fn up(adb: &Adb, name: &str, options: UpOptions) -> Result<Instance> {
                 bail!(
                     "--android and --display apply to container mode; window mode's Android and screen come from its system image"
                 );
+            }
+            if options.play_services.is_some() {
+                bail!("--play-services works in container mode only");
             }
             if options.is_ephemeral {
                 bail!(

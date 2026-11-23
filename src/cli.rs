@@ -5,6 +5,7 @@ use clap_complete::Shell;
 
 use annex_core::capture::Since;
 use annex_core::instance::{AndroidVersion, Mode};
+use annex_core::play_services::PlayServices;
 use annex_core::preferences::{Animations, Locale, TimeZone};
 use annex_core::redroid::Display;
 
@@ -14,7 +15,7 @@ use annex_core::redroid::Display;
     version,
     about = "Fast Android instances for Linux developers",
     long_about = "Fast Android instances for Linux developers.\n\n\
-        Instances run in container mode (as many as you like, Android 13-15, snapshots) or in \
+        Instances run in container mode (as many as you like, Android 8.1-15, snapshots) or in \
         window mode (one instance whose apps open in native desktop windows). Android Studio, \
         Flutter and adb see each one as an ordinary device."
 )]
@@ -71,7 +72,7 @@ pub enum Commands {
         /// How a new instance runs [default: container]
         #[arg(long, value_enum)]
         mode: Option<Mode>,
-        /// Android version for a new instance [default: 15]
+        /// Android version for a new instance [default: 15]; 8 means 8.1
         #[arg(long, value_enum)]
         android: Option<AndroidVersion>,
         /// Screen size and density, like 1080x2400/420 [default: 1080x2400/420]; changing it
@@ -84,6 +85,11 @@ pub enum Commands {
         /// Delete a new instance and its data at `annex down`, so every run starts clean
         #[arg(long)]
         ephemeral: bool,
+        /// Google Play services for a new instance [default: stand-in on Android 15, none
+        /// otherwise]; changing it on an existing instance rebuilds its container and keeps its
+        /// data
+        #[arg(long, value_enum)]
+        play_services: Option<PlayServices>,
         /// Also wait until the package manager answers, so installs work at once
         #[arg(long)]
         wait_boot: bool,
@@ -170,6 +176,18 @@ Annex may use it. A computer without GPS often knows its location only roughly."
         #[arg(value_name = "ARGS", num_args = 0..=2, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// Show or choose what an instance's cameras film
+    #[command(
+        override_usage = "annex camera [NAME] [landscape | city | desk | chart]",
+        after_help = "With no picture, lists the pictures and marks the current one. Apps see a new \
+picture the next time they open a camera. Both cameras film the same picture, drawn sharp at every \
+size. Android 15 instances with hardware rendering only."
+    )]
+    Camera {
+        /// An optional instance, then the picture
+        #[arg(value_name = "ARGS", num_args = 0..=2)]
+        args: Vec<String>,
+    },
     /// Show or set an instance's network: online, offline, slow or lossy
     #[command(
         override_usage = "annex net [NAME] [online | offline | slow | lossy]",
@@ -182,6 +200,27 @@ restarts; `online` ends it sooner. Container mode only."
         /// An optional instance, then the condition
         #[arg(value_name = "ARGS", num_args = 0..=2)]
         args: Vec<String>,
+    },
+    /// An app's push token, or a test push message, through the Google services stand-in
+    #[command(
+        override_usage = "annex fcm [NAME] token <PACKAGE>\n       annex fcm [NAME] send <PACKAGE> [--title TEXT] [--body TEXT] [--data KEY=VALUE]...",
+        after_help = "Tokens are placeholders made on the instance, never registered with Google, so a \
+server can't push to them; `send` delivers a message the way Play services delivers a real one, \
+so the app's FirebaseMessagingService runs. A title or body makes it a notification message."
+    )]
+    Fcm {
+        /// An optional instance, then `token` or `send`, then the app's package
+        #[arg(value_name = "ARGS", num_args = 2..=3, required = true)]
+        args: Vec<String>,
+        /// The notification's title (for `send`)
+        #[arg(long, value_name = "TEXT")]
+        title: Option<String>,
+        /// The notification's body (for `send`)
+        #[arg(long, value_name = "TEXT")]
+        body: Option<String>,
+        /// A data pair for the app (for `send`); repeat for more
+        #[arg(long, value_name = "KEY=VALUE")]
+        data: Vec<String>,
     },
     /// Record an instance's screen to a video file, with no time limit
     #[command(
@@ -341,6 +380,50 @@ mod tests {
         };
         assert_eq!(android, Some(AndroidVersion::Android14));
         assert_eq!(display.unwrap().to_string(), "1600x2560/320");
+    }
+
+    #[test]
+    fn parses_a_camera_picture_with_or_without_a_name() {
+        for (argv, expected) in [
+            (vec!["annex", "camera"], vec![]),
+            (vec!["annex", "camera", "city"], vec!["city"]),
+            (
+                vec!["annex", "camera", "e2e", "chart"],
+                vec!["e2e", "chart"],
+            ),
+        ] {
+            let Commands::Camera { args } = Cli::try_parse_from(argv).unwrap().command else {
+                panic!("expected camera");
+            };
+            assert_eq!(args, expected);
+        }
+    }
+
+    #[test]
+    fn parses_fcm_send_with_a_notification_and_data() {
+        let cli = Cli::try_parse_from([
+            "annex",
+            "fcm",
+            "e2e",
+            "send",
+            "com.example.app",
+            "--title",
+            "Order ready",
+            "--data",
+            "orderId=42",
+            "--data",
+            "gate=3",
+        ])
+        .unwrap();
+        let Commands::Fcm {
+            args, title, data, ..
+        } = cli.command
+        else {
+            panic!("expected fcm");
+        };
+        assert_eq!(args, ["e2e", "send", "com.example.app"]);
+        assert_eq!(title.as_deref(), Some("Order ready"));
+        assert_eq!(data, ["orderId=42", "gate=3"]);
     }
 
     #[test]

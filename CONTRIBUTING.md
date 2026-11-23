@@ -41,9 +41,11 @@ GDK_BACKEND=broadway BROADWAY_DISPLAY=:5 cargo run --features manager --bin anne
 | `src/cli.rs` | The command-line interface (clap) |
 | `src/manager/` | Annex Manager (`--features manager`): window, instance cards, detail page, dialogs; work runs off the UI thread through `task::spawn` |
 | `src/instance.rs` | The instance model: modes, states, Android versions, names, the default instance, dispatch to backends |
-| `src/redroid.rs`, `android/permissions/` | Redroid instances as Docker containers: create, rebuild, boot, display settings, and the files mounted into every instance (no camera) |
+| `src/redroid.rs` | Redroid instances as Docker containers: create, rebuild, boot, display settings, and the files mounted into every instance |
+| `src/camera.rs`, `android/camera/`, `android/permissions/` | The cameras: the camera driver mounted into Android 15 instances with hardware rendering, or the "no camera" settings for the rest, and `annex camera` (the `Picture` enum and the setting the driver reads; a new picture goes in both `camera.rs` and `camera.cpp`, in the same order). The driver binary is committed; after changing `camera.cpp`, rebuild it with `android/camera/build.sh` (needs the Android NDK) and commit it too |
 | `src/waydroid.rs` | Window mode, on Waydroid: start, freeze over D-Bus, state from its cgroup, app windows, the registered name |
 | `src/snapshot.rs` | Snapshot save, list and reset (Redroid only) |
+| `src/play_services/`, `android/framework/`, `android/play-services/` | The Google services stand-in (`--play-services`, `annex fcm`): microG downloaded and patched for offline push tokens and keyless maps (`gmscore.rs`), the framework patched so apps accept it (`framework.rs`), smali edits that fail rather than guess (`smali.rs`), and test pushes (`push.rs`). Patching runs in a pinned JRE container. The `.smali` files and `annex-sign.jar` are committed; after changing a `.java` file, rebuild with that folder's `build.sh` (needs a JDK and the Android SDK), commit the result, and bump the matching `PATCH_VERSION` |
 | `src/location.rs`, `android/gnss/` | `annex location`, and the GNSS driver mounted into every instance. The driver binary is committed; after changing `gnss.cpp`, rebuild it with `android/gnss/build.sh` (needs the Android NDK) and commit it too |
 | `src/preferences.rs` | Time zone, language and animations that `annex up` sets after boot |
 | `src/network.rs` | `annex net`: offline through Android's per-app firewall, slow and lossy through tc netem, adb never shaped |

@@ -2,14 +2,17 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use annex_core::adb::Adb;
-use annex_core::instance::{self, Backend, Instance, UpOptions};
+use annex_core::camera::{self, Picture};
+use annex_core::instance::{self, Backend, Instance, State, UpOptions};
 use annex_core::redroid::Display;
 use annex_core::{launcher, snapshot};
+use clap::ValueEnum;
 
 use crate::app::App;
+use crate::task;
 
-/// One instance in depth: its details, screen size, snapshots, and the destructive actions,
-/// each behind a confirmation.
+/// One instance in depth: its details, screen size, camera picture, snapshots, and the
+/// destructive actions, each behind a confirmation.
 pub struct DetailPage {
     name: String,
     page: adw::NavigationPage,
@@ -47,6 +50,9 @@ impl DetailPage {
         content.add(&Overview::new(app, &instance).group);
         if let Backend::Redroid(container) = &instance.backend {
             content.add(&Screen::new(app, &instance.name, container.display).group);
+            if instance.state == State::Running {
+                content.add(&Camera::new(app, &instance).group);
+            }
             content.add(&Snapshots::new(app, &instance.name).group);
         }
         content.add(&DangerZone::new(app, &instance).group);
@@ -135,6 +141,59 @@ impl Screen {
             });
         });
         group.add(&entry);
+        Self { group }
+    }
+}
+
+/// What the instance's cameras film. The current picture is read off the UI thread, and the group
+/// stays hidden unless the instance turns out to have cameras.
+struct Camera {
+    group: adw::PreferencesGroup,
+}
+
+impl Camera {
+    fn new(app: &Rc<App>, instance: &Instance) -> Self {
+        let group = adw::PreferencesGroup::builder()
+            .title("Camera")
+            .description("Both cameras film this picture; apps see a change the next time they open a camera.")
+            .visible(false)
+            .build();
+        let pictures = Picture::value_variants();
+        let labels: Vec<&str> = pictures.iter().map(|picture| picture.label()).collect();
+        let row = adw::ComboRow::builder()
+            .title("Picture")
+            .model(&gtk::StringList::new(&labels))
+            .build();
+        group.add(&row);
+        let app = app.clone();
+        let shown = group.clone();
+        let name = instance.name.clone();
+        let read = instance.clone();
+        task::spawn(
+            move || camera::picture(&read),
+            move |result| {
+                let Ok(current) = result else {
+                    return;
+                };
+                let index = pictures.iter().position(|picture| *picture == current);
+                row.set_selected(index.unwrap_or_default() as u32);
+                row.set_subtitle(&current.describe());
+                row.connect_selected_notify(move |row| {
+                    let Some(&picture) = pictures.get(row.selected() as usize) else {
+                        return;
+                    };
+                    let target = name.clone();
+                    app.act(&name, "Changing the camera picture...", move || {
+                        camera::set_picture(&instance::require_running(&target)?, picture)?;
+                        Ok(format!(
+                            "{target}'s cameras now film the {}",
+                            picture.label()
+                        ))
+                    });
+                });
+                shown.set_visible(true);
+            },
+        );
         Self { group }
     }
 }

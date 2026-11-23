@@ -3,6 +3,7 @@
 
 pub mod adb;
 pub mod bridge;
+pub mod camera;
 pub mod capture;
 pub mod desktop;
 pub mod docker;
@@ -13,6 +14,7 @@ pub mod launcher;
 pub mod location;
 pub mod network;
 pub mod paths;
+pub mod play_services;
 pub mod preferences;
 pub mod process;
 pub mod redroid;
