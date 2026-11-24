@@ -1,4 +1,6 @@
 use std::env;
+use std::ffi::OsStr;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::thread::sleep;
@@ -6,15 +8,19 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 
-use crate::paths::{home, which};
-use crate::process::stdout_within;
+use crate::paths::{data_dir, home, which, write_if_changed};
+use crate::process::{output_within, stdout_within};
+use crate::wsl;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(15);
+const WINDOWS_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Clone)]
 pub struct Adb {
     path: PathBuf,
+    windows_path: Option<PathBuf>,
+    server_port: Option<&'static str>,
 }
 
 impl Adb {
@@ -32,12 +38,51 @@ impl Adb {
             .map(|root| root.join("platform-tools/adb"))
             .find(|candidate| candidate.is_file())
             .or_else(|| which("adb"))
-            .map(|path| Adb { path })
+            .map(|path| Adb::new(path, wsl::is_wsl2()))
             .context("adb not found: install the Android SDK platform-tools")
+    }
+
+    /// Under WSL, Android Studio's adb on Windows also connects to each instance so its device
+    /// picker lists it, and this adb keeps its server off Windows' port.
+    fn new(path: PathBuf, is_wsl: bool) -> Adb {
+        let windows_path = is_wsl
+            .then(wsl::windows)
+            .flatten()
+            .and_then(|windows| windows.adb.clone());
+        let is_port_chosen = env::var_os(wsl::ADB_SERVER_PORT_VARIABLE).is_some();
+        let server_port = (is_wsl && !is_port_chosen).then_some(wsl::ADB_SERVER_PORT);
+        Adb {
+            path,
+            windows_path,
+            server_port,
+        }
     }
 
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    pub fn windows_path(&self) -> Option<&Path> {
+        self.windows_path.as_deref()
+    }
+
+    /// A command running this adb against annex's adb server.
+    pub fn command(&self) -> Command {
+        let mut command = Command::new(&self.path);
+        command.envs(self.server_environment());
+        command
+    }
+
+    /// The environment for a program that runs adb itself, such as the window helper.
+    pub fn environment(&self) -> Vec<(&'static str, &OsStr)> {
+        let mut environment = vec![("ADB", self.path.as_os_str())];
+        environment.extend(self.server_environment());
+        environment
+    }
+
+    fn server_environment(&self) -> Option<(&'static str, &OsStr)> {
+        self.server_port
+            .map(|port| (wsl::ADB_SERVER_PORT_VARIABLE, OsStr::new(port)))
     }
 
     /// The public half of the key this adb authenticates with; the adb server creates it on first start.
@@ -59,6 +104,27 @@ impl Adb {
         Ok(key)
     }
 
+    /// The keys an instance trusts: this adb's, and under WSL also the key of Android Studio's
+    /// adb on Windows, once it has made one. adbd reads one key per line.
+    pub fn trusted_keys(&self) -> Result<PathBuf> {
+        let key = self.public_key()?;
+        let windows_key = wsl::windows()
+            .map(|windows| windows.adb_key.as_path())
+            .filter(|windows_key| windows_key.is_file());
+        let Some(windows_key) = windows_key else {
+            return Ok(key);
+        };
+        let keys = format!(
+            "{}\n{}\n",
+            fs::read_to_string(&key)?.trim(),
+            fs::read_to_string(windows_key)?.trim()
+        );
+        let path = data_dir().join("adb_keys");
+        write_if_changed(&path, keys.as_bytes(), 0o644)
+            .with_context(|| format!("could not write {}", path.display()))?;
+        Ok(path)
+    }
+
     pub fn connect(&self, serial: &str) -> Result<()> {
         self.connect_within(serial, CONNECT_TIMEOUT)
     }
@@ -68,7 +134,10 @@ impl Adb {
         loop {
             self.quiet(&["connect", serial]);
             match self.state(serial).as_deref() {
-                Some("device") => return Ok(()),
+                Some("device") => {
+                    self.on_windows(&["connect", serial]);
+                    return Ok(());
+                }
                 Some("unauthorized") if started.elapsed() > timeout => {
                     bail!("{serial} refused this machine's adb key")
                 }
@@ -80,10 +149,12 @@ impl Adb {
 
     pub fn disconnect(&self, serial: &str) {
         self.quiet(&["disconnect", serial]);
+        self.on_windows(&["disconnect", serial]);
     }
 
     pub fn state(&self, serial: &str) -> Option<String> {
-        let output = Command::new(&self.path)
+        let output = self
+            .command()
             .args(["-s", serial, "get-state"])
             .stdin(Stdio::null())
             .stderr(Stdio::null())
@@ -97,10 +168,7 @@ impl Adb {
 
     /// Runs a device command and returns its trimmed output, giving up after `timeout`.
     pub fn run(&self, serial: &str, args: &[&str], timeout: Duration) -> Result<String> {
-        stdout_within(
-            Command::new(&self.path).args(["-s", serial]).args(args),
-            timeout,
-        )
+        stdout_within(self.command().args(["-s", serial]).args(args), timeout)
     }
 
     /// Runs `command` in the device shell. adb joins the arguments into one shell line, so
@@ -112,7 +180,8 @@ impl Adb {
     /// Runs a device command with its output going straight to the terminal, for transfers
     /// whose progress the user wants to see.
     pub fn run_attached(&self, serial: &str, args: &[&str]) -> Result<()> {
-        let status = Command::new(&self.path)
+        let status = self
+            .command()
             .args(["-s", serial])
             .args(args)
             .stdin(Stdio::null())
@@ -127,7 +196,8 @@ impl Adb {
     /// Runs a device command with its output going to `stdout`, such as a file, for output too
     /// large to hold in memory.
     pub fn run_into(&self, serial: &str, args: &[&str], stdout: Stdio) -> Result<()> {
-        let status = Command::new(&self.path)
+        let status = self
+            .command()
             .args(["-s", serial])
             .args(args)
             .stdin(Stdio::null())
@@ -173,12 +243,20 @@ impl Adb {
     }
 
     fn quiet(&self, args: &[&str]) {
-        let _ = Command::new(&self.path)
+        let _ = self
+            .command()
             .args(args)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status();
+    }
+
+    /// Best effort: Android Studio on Windows is a convenience, and annex works without it.
+    fn on_windows(&self, args: &[&str]) {
+        if let Some(windows_path) = &self.windows_path {
+            let _ = output_within(Command::new(windows_path).args(args), WINDOWS_TIMEOUT);
+        }
     }
 }
 

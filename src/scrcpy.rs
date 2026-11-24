@@ -69,7 +69,7 @@ impl Scrcpy {
             Command::new(&self.path)
                 .args(["--serial", serial, "--window-title", title, "--no-audio"])
                 .args(extra)
-                .env("ADB", adb.path())
+                .envs(adb.environment())
                 .env("SDL_VIDEO_X11_WMCLASS", app_id)
                 .env("SDL_VIDEO_WAYLAND_WMCLASS", app_id),
             &log,
@@ -92,7 +92,7 @@ impl Scrcpy {
                 .arg(format!("--serial={serial}"))
                 .arg(format!("--record={}", path.display()))
                 .args(["--no-window", "--no-control", "--no-audio"])
-                .env("ADB", adb.path()),
+                .envs(adb.environment()),
             log,
         )?;
         sleep(STARTUP);
