@@ -78,6 +78,23 @@ Run the same instances on CI runners, and give test suites what a real phone giv
 - [ ] Choose Google services in Annex Manager's New instance dialog
 - [ ] Real push messages through Google, as an opt-in per instance
 
+## Phase 6: Windows and macOS
+
+Instances share the host's Linux kernel, so on Windows and macOS they need one lightweight Linux VM underneath, shared by every instance. annex itself, adb and the screen window run natively and drive Docker inside that VM over its socket. Most instance code already only calls `docker` and connects adb to `127.0.0.1`; the parts that change are the host paths bind-mounted into each container, which must exist at the same path inside the VM, and the desktop pieces.
+
+- [ ] Gate: on an Apple Silicon Mac, benchmark instances inside a Lima VM against the Android Studio emulator, which already runs on Apple's hypervisor there. Go ahead only if annex is still clearly faster at boot, resume and the install and launch loop, or clearly lighter on memory
+- [ ] An engine layer: `docker.rs` targets the VM's Docker context, and `annex doctor` checks that every bind-mounted path exists inside the VM
+- [ ] macOS: `annex setup` creates and starts a Lima VM (Apple Virtualization framework, Ubuntu guest, whose kernel has binder) with the home folder mounted at the same path and adb ports forwarded to the Mac. Apple Silicon runs arm64 images (see arm64 hosts below), so APKs built for phones run as they are
+- [ ] Windows: the Linux `annex` binary inside WSL 2. Started: `annex doctor` and `annex setup` recognize WSL and give the steps only Windows can take (a WSL kernel with binder, systemd for the container engine). annex's own adb runs in WSL, so Windows needs neither Android Studio nor adb; with an adb on Windows, Windows tools such as Android Studio or flutter.exe reach instances too. Still to do: try it on a Windows machine
+- [ ] Software rendering on both: a Mac's Linux VM gets no 3D acceleration, and WSL2 exposes `/dev/dxg` instead of `/dev/dri` render nodes. Features that need hardware rendering, such as the virtual camera, stay off there
+- [ ] Machine checks and setup per OS: `setup/distro.rs`, `gpu.rs` and `doctor.rs` are Linux-only today
+- [ ] Desktop bridge per OS: clipboard, notifications, panel menu, autostart (launchd, Windows Startup) and host location (CoreLocation, Windows geolocation) in place of X11, notify-send, the StatusNotifierItem menu, systemd and GeoClue
+- [ ] App launcher entries per OS in place of `.desktop` files
+- [ ] Release assets for macOS (arm64, x86_64) and Windows, CI runners for both, and `annex update` choosing the asset for its target
+- [ ] Annex Manager on macOS and Windows. GTK 4 builds there, but libadwaita looks out of place, so the CLI ships first
+
+Window mode stays Linux-only.
+
 ## Next
 
 - [ ] Android 16 (API 36+). Its system_server needs `/dev/ashmem`, which mainline kernels no longer have, so Redroid 16 does not boot. Needs a memfd patch to the image.

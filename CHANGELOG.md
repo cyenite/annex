@@ -4,6 +4,10 @@ All notable changes to annex are recorded here. The format follows [Keep a Chang
 
 ## Unreleased
 
+### Added
+
+- First steps toward Windows: annex runs inside WSL 2. `annex doctor` and `annex setup` recognize WSL instead of treating it as a container, and give the steps only Windows can take: a WSL kernel with binder (set in `.wslconfig`), and systemd in `/etc/wsl.conf` so the container engine starts. annex's own adb runs in WSL, so Windows needs neither Android Studio nor adb; if Windows has an adb, instances also trust its key and show up in Windows tools such as Android Studio. Not yet tried on a Windows machine.
+
 ## 0.8.0 - 2026-11-20
 
 ### Added
