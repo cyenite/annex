@@ -18,7 +18,7 @@ pub const ADB_SERVER_PORT: &str = "5038";
 pub const ADB_SERVER_PORT_VARIABLE: &str = "ANDROID_ADB_SERVER_PORT";
 
 const WINDOWS_TIMEOUT: Duration = Duration::from_secs(10);
-const CMD_FALLBACK: &str = "/mnt/c/Windows/System32/cmd.exe";
+const SYSTEM32: &str = "/mnt/c/Windows/System32";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Wsl {
@@ -93,11 +93,7 @@ fn lookup_windows() -> Option<Windows> {
 }
 
 fn windows_program(name: &str) -> Option<String> {
-    let output = output_within(
-        Command::new(cmd()).args(["/d", "/c", "where", name]),
-        WINDOWS_TIMEOUT,
-    )
-    .ok()?;
+    let output = output_within(cmd()?.args(["/d", "/c", "where", name]), WINDOWS_TIMEOUT).ok()?;
     parse_program(&String::from_utf8_lossy(&output.stdout))
 }
 
@@ -110,19 +106,24 @@ fn parse_program(output: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-fn cmd() -> PathBuf {
-    if Path::new(CMD_FALLBACK).is_file() {
-        PathBuf::from(CMD_FALLBACK)
-    } else {
-        PathBuf::from("cmd.exe")
-    }
+/// cmd.exe from System32, started there: `where` searches the current folder before PATH, and
+/// a project folder on the Windows drive could hold a planted adb.exe. Without the usual /mnt/c
+/// mount, annex skips Windows altogether.
+fn cmd() -> Option<Command> {
+    let system32 = Path::new(SYSTEM32);
+    let cmd = system32.join("cmd.exe");
+    cmd.is_file().then(|| {
+        let mut command = Command::new(cmd);
+        command.current_dir(system32);
+        command
+    })
 }
 
 /// One variable per cmd.exe call: cmd.exe parses its command line itself, and an argument with
 /// spaces or `&` would reach it re-quoted by WSL's interop.
 fn windows_variable(name: &str) -> Option<String> {
     let output = output_within(
-        Command::new(cmd()).args(["/d", "/c", "echo", &format!("%{name}%")]),
+        cmd()?.args(["/d", "/c", "echo", &format!("%{name}%")]),
         WINDOWS_TIMEOUT,
     )
     .ok()?;
