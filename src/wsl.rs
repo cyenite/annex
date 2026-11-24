@@ -1,6 +1,6 @@
 //! annex running inside WSL 2 on Windows. Instances still run on the WSL kernel; what differs is
-//! where binder comes from, how the container engine starts, and that Android Studio usually runs
-//! on Windows with its own adb server and key.
+//! where binder comes from, how the container engine starts, and that Windows may have an adb
+//! of its own, with its own server and key, for Windows tools to reach instances through.
 
 use std::env;
 use std::fs;
@@ -11,8 +11,9 @@ use std::time::Duration;
 
 use crate::process::output_within;
 
-/// Android Studio's adb on Windows listens on 5037, and WSL forwards localhost ports between the
-/// two systems, so annex's adb server in WSL takes another port instead of fighting over that one.
+/// An adb on Windows listens on 5037, and WSL forwards localhost ports between the two systems,
+/// so while Windows has one, annex's adb server in WSL takes another port instead of fighting
+/// over that one.
 pub const ADB_SERVER_PORT: &str = "5038";
 pub const ADB_SERVER_PORT_VARIABLE: &str = "ANDROID_ADB_SERVER_PORT";
 
@@ -56,7 +57,8 @@ pub fn is_wsl2() -> bool {
     Wsl::detect() == Some(Wsl::Version2)
 }
 
-/// Where Android Studio's adb lives on Windows, as WSL paths.
+/// Windows' own adb and its key, as WSL paths. Windows needn't have an adb at all: it only lets
+/// Windows tools such as Android Studio or flutter.exe reach instances.
 pub struct Windows {
     pub adb: Option<PathBuf>,
     pub adb_key: PathBuf,
@@ -83,21 +85,44 @@ fn lookup_windows() -> Option<Windows> {
     let adb = sdk_roots
         .into_iter()
         .flatten()
-        .filter_map(|root| linux_path(&format!("{root}\\platform-tools\\adb.exe")))
+        .map(|root| format!("{root}\\platform-tools\\adb.exe"))
+        .chain(windows_program("adb"))
+        .filter_map(|path| linux_path(&path))
         .find(|candidate| candidate.is_file());
     Some(Windows { adb, adb_key })
+}
+
+fn windows_program(name: &str) -> Option<String> {
+    let output = output_within(
+        Command::new(cmd()).args(["/d", "/c", "where", name]),
+        WINDOWS_TIMEOUT,
+    )
+    .ok()?;
+    parse_program(&String::from_utf8_lossy(&output.stdout))
+}
+
+/// `where` lists every match on PATH, one per line, in the order Windows would pick them.
+fn parse_program(output: &str) -> Option<String> {
+    output
+        .lines()
+        .map(str::trim)
+        .find(|line| line.to_lowercase().ends_with(".exe"))
+        .map(str::to_string)
+}
+
+fn cmd() -> PathBuf {
+    if Path::new(CMD_FALLBACK).is_file() {
+        PathBuf::from(CMD_FALLBACK)
+    } else {
+        PathBuf::from("cmd.exe")
+    }
 }
 
 /// One variable per cmd.exe call: cmd.exe parses its command line itself, and an argument with
 /// spaces or `&` would reach it re-quoted by WSL's interop.
 fn windows_variable(name: &str) -> Option<String> {
-    let cmd = if Path::new(CMD_FALLBACK).is_file() {
-        PathBuf::from(CMD_FALLBACK)
-    } else {
-        PathBuf::from("cmd.exe")
-    };
     let output = output_within(
-        Command::new(cmd).args(["/d", "/c", "echo", &format!("%{name}%")]),
+        Command::new(cmd()).args(["/d", "/c", "echo", &format!("%{name}%")]),
         WINDOWS_TIMEOUT,
     )
     .ok()?;
@@ -171,5 +196,18 @@ mod tests {
         );
         assert_eq!(parse_variable("ANDROID_HOME", "%ANDROID_HOME%\r\n"), None);
         assert_eq!(parse_variable("ANDROID_HOME", "\r\n"), None);
+    }
+
+    #[test]
+    fn takes_the_first_program_windows_would_run() {
+        let output = "C:\\tools\\platform-tools\\adb.exe\r\nC:\\scoop\\shims\\adb.exe\r\n";
+        assert_eq!(
+            parse_program(output).as_deref(),
+            Some("C:\\tools\\platform-tools\\adb.exe")
+        );
+        assert_eq!(
+            parse_program("INFO: Could not find files for the given pattern(s).\r\n"),
+            None
+        );
     }
 }

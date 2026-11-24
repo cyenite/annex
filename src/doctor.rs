@@ -75,7 +75,7 @@ pub fn run() -> Vec<Check> {
         adb_key(),
     ];
     if wsl.is_some() {
-        checks.push(android_studio());
+        checks.push(windows_adb());
     }
     checks.extend([
         windows(),
@@ -245,31 +245,29 @@ fn adb_key() -> Check {
     }
 }
 
-/// Android Studio on Windows runs its own adb, which can only open instances whose container was
-/// created after that adb made its key.
-fn android_studio() -> Check {
+/// An adb on Windows is optional: annex's own adb runs in WSL. With one, Windows tools such as
+/// Android Studio or flutter.exe reach instances created after it had a key, which annex makes.
+fn windows_adb() -> Check {
     let Some(windows) = wsl::windows() else {
         return Check::new(
-            Level::Warn,
-            "android studio",
-            "couldn't read Windows' settings from WSL: is Windows interop turned off?",
+            Level::Ok,
+            "windows adb",
+            "not looked for: WSL can't run Windows programs (interop is off), so only tools in WSL reach instances",
         );
     };
-    match (&windows.adb, windows.adb_key.is_file()) {
-        (Some(_), true) => Check::new(
+    match &windows.adb {
+        Some(path) => Check::new(
             Level::Ok,
-            "android studio",
-            "its adb on Windows connects to instances created from now on",
+            "windows adb",
+            format!(
+                "{}: Windows tools reach instances created from now on",
+                path.display()
+            ),
         ),
-        (Some(_), false) => Check::new(
-            Level::Warn,
-            "android studio",
-            "its adb on Windows has no key yet: start Android Studio once, then create instances",
-        ),
-        (None, _) => Check::new(
+        None => Check::new(
             Level::Ok,
-            "android studio",
-            "not found on Windows (optional: instances show up in its device picker)",
+            "windows adb",
+            "none (optional): tools in WSL reach instances; install platform-tools on Windows for Windows tools",
         ),
     }
 }

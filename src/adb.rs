@@ -42,15 +42,17 @@ impl Adb {
             .context("adb not found: install the Android SDK platform-tools")
     }
 
-    /// Under WSL, Android Studio's adb on Windows also connects to each instance so its device
-    /// picker lists it, and this adb keeps its server off Windows' port.
+    /// Under WSL, an adb on Windows, if there is one, also connects to each instance so Windows
+    /// tools see it, and this adb then keeps its server off Windows' port. Without one, WSL
+    /// works like any Linux machine, and `adb devices` in its terminal lists the instances.
     fn new(path: PathBuf, is_wsl: bool) -> Adb {
         let windows_path = is_wsl
             .then(wsl::windows)
             .flatten()
             .and_then(|windows| windows.adb.clone());
         let is_port_chosen = env::var_os(wsl::ADB_SERVER_PORT_VARIABLE).is_some();
-        let server_port = (is_wsl && !is_port_chosen).then_some(wsl::ADB_SERVER_PORT);
+        let server_port =
+            (windows_path.is_some() && !is_port_chosen).then_some(wsl::ADB_SERVER_PORT);
         Adb {
             path,
             windows_path,
@@ -104,10 +106,13 @@ impl Adb {
         Ok(key)
     }
 
-    /// The keys an instance trusts: this adb's, and under WSL also the key of Android Studio's
-    /// adb on Windows, once it has made one. adbd reads one key per line.
+    /// The keys an instance trusts: this adb's, and under WSL also the key of the adb on
+    /// Windows, if there is one. adbd reads one key per line.
     pub fn trusted_keys(&self) -> Result<PathBuf> {
         let key = self.public_key()?;
+        if self.windows_path.is_some() && wsl::windows().is_some_and(|w| !w.adb_key.is_file()) {
+            self.on_windows(&["start-server"]);
+        }
         let windows_key = wsl::windows()
             .map(|windows| windows.adb_key.as_path())
             .filter(|windows_key| windows_key.is_file());
@@ -252,7 +257,7 @@ impl Adb {
             .status();
     }
 
-    /// Best effort: Android Studio on Windows is a convenience, and annex works without it.
+    /// Best effort: Windows tools reaching instances is a convenience, and annex works without.
     fn on_windows(&self, args: &[&str]) {
         if let Some(windows_path) = &self.windows_path {
             let _ = output_within(Command::new(windows_path).args(args), WINDOWS_TIMEOUT);
