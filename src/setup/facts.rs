@@ -11,7 +11,7 @@ use crate::adb::Adb;
 use crate::instance::AndroidVersion;
 use crate::paths::{home, which};
 use crate::scrcpy::Scrcpy;
-use crate::{bridge, docker, launcher, network, update, waydroid};
+use crate::{bridge, docker, launcher, network, update, waydroid, wsl};
 
 pub const BINDER_MODULE: &str = "binder_linux";
 pub const BINDER_BOOT_FILE: &str = "/etc/modules-load.d/annex-binder.conf";
@@ -48,6 +48,7 @@ pub fn gather(options: Options) -> Facts {
     Facts {
         manager,
         unavailable,
+        is_wsl: wsl::is_wsl2(),
         has_adb: Adb::locate().is_ok(),
         has_image: can_use_docker
             && docker::succeeds(&["image", "inspect", AndroidVersion::Android15.image()]),
@@ -56,6 +57,7 @@ pub fn gather(options: Options) -> Facts {
         has_notify: which("notify-send").is_some(),
         has_adb_key: adb_key_path().is_some_and(|key| key.is_file()),
         has_manager,
+        has_systemd: wsl::has_systemd(),
         has_manager_entry: launcher::has_manager_entry(),
         has_image_rule: has_image_rule(),
         can_use_docker,
@@ -91,9 +93,10 @@ pub fn container_kind() -> Option<String> {
         .map(|(_, kind)| kind.to_string())
 }
 
+/// systemd counts WSL as a container, but WSL 2 has a kernel of its own: annex handles it apart.
 fn parse_container_kind(is_container: bool, output: &str) -> Option<String> {
     let kind = output.trim();
-    (is_container && !kind.is_empty() && kind != "none").then(|| kind.to_string())
+    (is_container && !["", "none", "wsl"].contains(&kind)).then(|| kind.to_string())
 }
 
 /// What to do on the host when annex runs in a container whose host hasn't loaded binder.
@@ -198,5 +201,6 @@ mod tests {
         assert_eq!(parse_container_kind(false, "none\n"), None);
         assert_eq!(parse_container_kind(true, "none"), None);
         assert_eq!(parse_container_kind(true, ""), None);
+        assert_eq!(parse_container_kind(true, "wsl\n"), None);
     }
 }

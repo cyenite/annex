@@ -1,5 +1,6 @@
 use super::distro::{Package, PackageManager};
 use super::facts::{binder_host_steps, network_host_steps};
+use crate::{network, wsl};
 
 /// What setup found on this machine. Gathered once, so the plan is a pure function of it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -7,6 +8,8 @@ pub struct Facts {
     pub manager: Option<PackageManager>,
     /// Packages the distro's repositories can't install right now.
     pub unavailable: Vec<Package>,
+    /// Whether this is WSL 2, whose kernel comes from Windows' side and has no module files.
+    pub is_wsl: bool,
     pub has_adb: bool,
     pub has_image: bool,
     pub has_binder: bool,
@@ -14,6 +17,7 @@ pub struct Facts {
     pub has_notify: bool,
     pub has_adb_key: bool,
     pub has_manager: bool,
+    pub has_systemd: bool,
     pub has_image_rule: bool,
     pub can_use_docker: bool,
     pub has_window_mode: bool,
@@ -194,7 +198,11 @@ pub fn plan(facts: &Facts, options: Options) -> Plan {
         facts.has_docker && facts.is_docker_running,
         "container engine running",
     ) {
-        steps.push(Step::StartDocker);
+        if facts.is_wsl && !facts.has_systemd {
+            steps.push(Step::Manual(wsl::systemd_steps()));
+        } else {
+            steps.push(Step::StartDocker);
+        }
     }
     if check(
         facts.can_use_docker || facts.is_in_docker_group,
@@ -202,8 +210,17 @@ pub fn plan(facts: &Facts, options: Options) -> Plan {
     ) {
         steps.push(Step::JoinDockerGroup);
     }
-    // A container can't load kernel modules or see the host's udev, so the host does both.
-    if let Some(kind) = &facts.container {
+    // WSL's kernel is chosen on Windows' side and ships no loadable modules, and Windows lists
+    // no Linux disks, so there is nothing to load at boot or hide.
+    if facts.is_wsl {
+        if check(facts.has_binder, "binder in the WSL kernel") {
+            steps.push(Step::Manual(wsl::binder_steps()));
+        }
+        if check(facts.can_shape_network, "traffic shaping") {
+            steps.push(Step::Manual(wsl::network_steps(&network::MODULES)));
+        }
+    } else if let Some(kind) = &facts.container {
+        // A container can't load kernel modules or see the host's udev, so the host does both.
         if check(facts.has_binder, "binder loaded (by the host)") {
             steps.push(Step::Manual(binder_host_steps(kind)));
         }
@@ -274,6 +291,7 @@ mod tests {
         Facts {
             manager: Some(PackageManager::Apt),
             unavailable: Vec::new(),
+            is_wsl: false,
             has_adb: true,
             has_image: true,
             has_binder: true,
@@ -281,6 +299,7 @@ mod tests {
             has_notify: true,
             has_adb_key: true,
             has_manager: true,
+            has_systemd: true,
             has_image_rule: true,
             can_use_docker: true,
             has_window_mode: true,
@@ -452,6 +471,43 @@ mod tests {
         assert!(
             matches!(&steps[..], [Step::Manual(text)] if text.contains("on its host") && text.contains("sch_netem"))
         );
+    }
+
+    #[test]
+    fn wsl_leaves_the_kernel_to_windows() {
+        let facts = Facts {
+            is_wsl: true,
+            has_binder: false,
+            has_image_rule: false,
+            has_binder_at_boot: false,
+            ..ready()
+        };
+        let steps = plan(&facts, Options::default()).steps;
+        assert!(
+            matches!(&steps[..], [Step::Manual(text)] if text.contains(".wslconfig") && text.contains("BINDERFS"))
+        );
+        let loaded = Facts {
+            has_binder: true,
+            ..facts
+        };
+        assert!(plan(&loaded, Options::default()).steps.is_empty());
+    }
+
+    #[test]
+    fn wsl_without_systemd_cannot_start_the_container_engine() {
+        let facts = Facts {
+            is_wsl: true,
+            has_systemd: false,
+            is_docker_running: false,
+            ..ready()
+        };
+        let steps = plan(&facts, Options::default()).steps;
+        assert!(matches!(&steps[..], [Step::Manual(text)] if text.contains("/etc/wsl.conf")));
+        let native = Facts {
+            is_wsl: false,
+            ..facts
+        };
+        assert_eq!(plan(&native, Options::default()).steps, [Step::StartDocker]);
     }
 
     #[test]

@@ -24,3 +24,4 @@ pub mod snapshot;
 pub mod update;
 pub mod waydroid;
 pub mod window;
+pub mod wsl;

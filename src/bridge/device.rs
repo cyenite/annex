@@ -2,7 +2,7 @@ use std::fs::File;
 use std::io::Read;
 use std::net::TcpStream;
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::thread::sleep;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -77,7 +77,8 @@ impl Session {
             server
         };
         let output = File::create(&log)?;
-        let server = Command::new(adb.path())
+        let server = adb
+            .command()
             .args(["-s", serial, "shell", &command])
             .stdin(Stdio::null())
             .stdout(output.try_clone()?)

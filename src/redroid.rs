@@ -321,12 +321,12 @@ fn create(adb: &Adb, name: &str, container: &Container) -> Result<()> {
     } else {
         "guest"
     };
-    let public_key = adb.public_key()?;
+    let trusted_keys = adb.trusted_keys()?;
     let container_name = container_name(name);
     let dpi = format!("androidboot.redroid_dpi={}", display.dpi);
     let width = format!("androidboot.redroid_width={}", display.width);
     let height = format!("androidboot.redroid_height={}", display.height);
-    let key_mount = format!("{}:{}:ro", public_key.display(), adb_keys_path(*android));
+    let key_mount = format!("{}:{}:ro", trusted_keys.display(), adb_keys_path(*android));
     let name_label = format!("annex.name={name}");
     let port_label = format!("annex.adb-port={port}");
     let data_mount = format!("{}:/data", volume_name(name));

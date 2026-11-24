@@ -9,6 +9,7 @@ use crate::instance::AndroidVersion;
 use crate::paths::which;
 use crate::scrcpy::Scrcpy;
 use crate::setup::facts;
+use crate::wsl::{self, Wsl};
 use crate::{desktop, docker, gpu, network, waydroid};
 
 const LOW_MEMORY_KIB: u64 = 2 * 1024 * 1024;
@@ -61,16 +62,22 @@ impl Check {
 pub fn run() -> Vec<Check> {
     let container = facts::container_kind();
     let container = container.as_deref();
-    vec![
+    let wsl = Wsl::detect();
+    let mut checks = vec![
         kernel(),
-        host(container),
-        binder(container),
-        binder_on_boot(container),
+        host(container, wsl),
+        binder(container, wsl),
+        binder_on_boot(container, wsl),
         shared_memory(),
-        docker_access(),
-        graphics(),
+        docker_access(wsl),
+        graphics(wsl),
         adb(),
         adb_key(),
+    ];
+    if wsl.is_some() {
+        checks.push(windows_adb());
+    }
+    checks.extend([
         windows(),
         memory(),
         image(),
@@ -79,8 +86,9 @@ pub fn run() -> Vec<Check> {
         desktop_clipboard(),
         desktop_notifications(),
         panel_menu(),
-        disk_images(container),
-    ]
+        disk_images(container, wsl),
+    ]);
+    checks
 }
 
 pub fn has_failures(checks: &[Check]) -> bool {
@@ -112,26 +120,46 @@ fn kernel() -> Check {
     Check::new(Level::Ok, "kernel", release.trim())
 }
 
-fn host(container: Option<&str>) -> Check {
-    match container {
-        Some(kind) => Check::new(
+fn host(container: Option<&str>, wsl: Option<Wsl>) -> Check {
+    match (container, wsl) {
+        (_, Some(Wsl::Version1)) => Check::new(
+            Level::Fail,
+            "host",
+            "WSL 1 has no Linux kernel to run instances on: run `wsl --set-version <distro> 2` in Windows",
+        ),
+        (_, Some(wsl)) => Check::new(
+            Level::Ok,
+            "host",
+            format!("{}: its kernel is set up from Windows", wsl.label()),
+        ),
+        (Some(kind), None) => Check::new(
             Level::Ok,
             "host",
             format!("{kind} container: kernel modules are loaded by its host"),
         ),
-        None => Check::new(Level::Ok, "host", "not a container"),
+        (None, None) => Check::new(Level::Ok, "host", "not a container"),
     }
 }
 
-fn binder(container: Option<&str>) -> Check {
-    match (facts::has_binder(), container) {
-        (true, _) => Check::new(Level::Ok, "binder", "binderfs available"),
-        (false, Some(kind)) => Check::new(Level::Fail, "binder", facts::binder_host_steps(kind)),
-        (false, None) => Check::new(Level::Fail, "binder", "not loaded: run `annex setup`"),
+fn binder(container: Option<&str>, wsl: Option<Wsl>) -> Check {
+    match (facts::has_binder(), container, wsl) {
+        (true, _, _) => Check::new(Level::Ok, "binder", "binderfs available"),
+        (false, _, Some(_)) => Check::new(Level::Fail, "binder", wsl::binder_steps()),
+        (false, Some(kind), None) => {
+            Check::new(Level::Fail, "binder", facts::binder_host_steps(kind))
+        }
+        (false, None, None) => Check::new(Level::Fail, "binder", "not loaded: run `annex setup`"),
     }
 }
 
-fn binder_on_boot(container: Option<&str>) -> Check {
+fn binder_on_boot(container: Option<&str>, wsl: Option<Wsl>) -> Check {
+    if wsl.is_some() {
+        return Check::new(
+            Level::Ok,
+            "binder on boot",
+            "comes with the WSL kernel, if it has binder",
+        );
+    }
     if container.is_some() {
         return Check::new(
             Level::Ok,
@@ -162,14 +190,17 @@ fn shared_memory() -> Check {
     }
 }
 
-fn docker_access() -> Check {
+fn docker_access(wsl: Option<Wsl>) -> Check {
     match docker::run(&["info", "--format", "{{.ServerVersion}}"]) {
         Ok(version) => Check::new(Level::Ok, "docker", format!("server {version}")),
+        Err(_) if wsl.is_some() && !wsl::has_systemd() => {
+            Check::new(Level::Fail, "docker", wsl::systemd_steps())
+        }
         Err(_) => Check::new(Level::Fail, "docker", "unreachable: run `annex setup`"),
     }
 }
 
-fn graphics() -> Check {
+fn graphics(wsl: Option<Wsl>) -> Check {
     let nodes = gpu::render_nodes();
     if let Some(node) = nodes.iter().find(|node| node.vendor.has_mesa_driver()) {
         return Check::new(
@@ -186,6 +217,11 @@ fn graphics() -> Check {
                 "{} has no Mesa driver: software rendering",
                 node.vendor.label()
             ),
+        ),
+        None if wsl.is_some() => Check::new(
+            Level::Warn,
+            "gpu",
+            "WSL shares the GPU through a driver Android can't use: software rendering",
         ),
         None => Check::new(Level::Warn, "gpu", "no render node: software rendering"),
     }
@@ -206,6 +242,33 @@ fn adb_key() -> Check {
             format!("{} (only this key can open instances)", key.display()),
         ),
         Err(error) => Check::new(Level::Fail, "adb key", error.to_string()),
+    }
+}
+
+/// An adb on Windows is optional: annex's own adb runs in WSL. With one, Windows tools such as
+/// Android Studio or flutter.exe reach instances created after it had a key, which annex makes.
+fn windows_adb() -> Check {
+    let Some(windows) = wsl::windows() else {
+        return Check::new(
+            Level::Ok,
+            "windows adb",
+            "not looked for: WSL can't run Windows programs (interop is off), so only tools in WSL reach instances",
+        );
+    };
+    match &windows.adb {
+        Some(path) => Check::new(
+            Level::Ok,
+            "windows adb",
+            format!(
+                "{}: Windows tools reach instances created from now on",
+                path.display()
+            ),
+        ),
+        None => Check::new(
+            Level::Ok,
+            "windows adb",
+            "none (optional): tools in WSL reach instances; install platform-tools on Windows for Windows tools",
+        ),
     }
 }
 
@@ -341,7 +404,14 @@ fn no_desktop(name: &'static str) -> Check {
     Check::new(Level::Ok, name, "not needed: no desktop session")
 }
 
-fn disk_images(container: Option<&str>) -> Check {
+fn disk_images(container: Option<&str>, wsl: Option<Wsl>) -> Check {
+    if wsl.is_some() {
+        return Check::new(
+            Level::Ok,
+            "disk images",
+            "nothing to hide: Windows doesn't list them",
+        );
+    }
     if container.is_some() {
         return Check::new(
             Level::Ok,
@@ -383,9 +453,16 @@ mod tests {
 
     #[test]
     fn a_container_without_binder_points_at_the_host() {
-        let check = host(Some("lxc"));
+        let check = host(Some("lxc"), None);
         assert!(check.detail.contains("lxc"));
-        assert_eq!(binder_on_boot(Some("lxc")).level, Level::Ok);
-        assert_eq!(disk_images(Some("docker")).level, Level::Ok);
+        assert_eq!(binder_on_boot(Some("lxc"), None).level, Level::Ok);
+        assert_eq!(disk_images(Some("docker"), None).level, Level::Ok);
+    }
+
+    #[test]
+    fn wsl_1_cannot_run_instances() {
+        assert_eq!(host(None, Some(Wsl::Version1)).level, Level::Fail);
+        assert_eq!(host(None, Some(Wsl::Version2)).level, Level::Ok);
+        assert_eq!(disk_images(None, Some(Wsl::Version2)).level, Level::Ok);
     }
 }
